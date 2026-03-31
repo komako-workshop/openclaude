@@ -1,0 +1,9 @@
+export const ASK_USER_QUESTION_TOOL_NAME: string = "AskUserQuestion";
+export const FILE_READ_TOOL_NAME: string = "Read";
+export const GLOB_TOOL_NAME: string = "Glob";
+export const GREP_TOOL_NAME: string = "Grep";
+export const LIST_MCP_RESOURCES_TOOL_NAME: string = "ListMcpResources";
+export const LSP_TOOL_NAME: string = "LSP";
+export const SLEEP_TOOL_NAME: string = "Sleep";
+export const TASK_STOP_TOOL_NAME: string = "TaskStop";
+export const TOOL_SEARCH_TOOL_NAME: string = "ToolSearch";

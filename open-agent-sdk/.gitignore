@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+cli.mjs
+
+# Native vendor binaries (platform-specific, download at install)
+vendor/
+src/utils/vendor/
+
+# Package archives
+*.tgz
+
+# Environment / secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Debug / logs
+*.log
+npm-debug.log*
+
+# Lock file (optional: include if you want reproducible builds)
+# package-lock.json

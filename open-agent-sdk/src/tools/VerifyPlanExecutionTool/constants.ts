@@ -1,0 +1,12 @@
+export const ENTER_PLAN_MODE_TOOL_NAME: string = "EnterPlanMode";
+export const EXIT_PLAN_MODE_TOOL_NAME: string = "ExitPlanMode";
+export const SEND_MESSAGE_TOOL_NAME: string = "SendMessage";
+export const TASK_CREATE_TOOL_NAME: string = "TaskCreate";
+export const TASK_GET_TOOL_NAME: string = "TaskGet";
+export const TASK_LIST_TOOL_NAME: string = "TaskList";
+export const TASK_OUTPUT_TOOL_NAME: string = "TaskOutput";
+export const TASK_UPDATE_TOOL_NAME: string = "TaskUpdate";
+export const TEAM_CREATE_TOOL_NAME: string = "TeamCreate";
+export const TEAM_DELETE_TOOL_NAME: string = "TeamDelete";
+export const TODO_WRITE_TOOL_NAME: string = "TodoWrite";
+export const VERIFY_PLAN_EXECUTION_TOOL_NAME: string = "VerifyPlanExecution";

@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+cli.mjs
+*.tgz
+
+# Native vendor binaries
+vendor/
+src/utils/vendor/
+
+# Environment / secrets
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Debug / logs
+*.log
+npm-debug.log*
+
+# Lock files (keep package.json, ignore locks)
+package-lock.json
+pnpm-lock.yaml

@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code vs ClawLoop — 架构对比</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #111113;
+  color: #c8c8cd;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.7;
+  padding: 48px 24px 80px;
+}
+.doc {
+  max-width: 760px;
+  margin: 0 auto;
+}
+h1 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #ededef;
+  margin-bottom: 6px;
+}
+.subtitle {
+  font-size: 14px;
+  color: #7e7e86;
+  margin-bottom: 28px;
+  line-height: 1.8;
+}
+h2 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7e7e86;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin: 40px 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #c8c8cd;
+  margin: 20px 0 8px;
+}
+p {
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+code {
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.05);
+  color: #c8c8cd;
+}
+
+.hero-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 32px;
+}
+@media (max-width: 600px) {
+  .hero-cards { grid-template-columns: 1fr; }
+}
+.hero-card {
+  padding: 20px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.hero-card.cc {
+  background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(99,102,241,0.02));
+  border-color: rgba(99,102,241,0.15);
+}
+.hero-card.cl {
+  background: linear-gradient(135deg, rgba(52,211,153,0.08), rgba(52,211,153,0.02));
+  border-color: rgba(52,211,153,0.15);
+}
+.hero-card .label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.hero-card.cc .label { color: #a5b4fc; }
+.hero-card.cl .label { color: #6ee7b7; }
+.hero-card .name {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ededef;
+  margin-bottom: 4px;
+}
+.hero-card .desc {
+  font-size: 13px;
+  color: #7e7e86;
+  line-height: 1.6;
+}
+.hero-card .stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.hero-card .stat {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #a0a0a8;
+}
+.hero-card .stat strong {
+  color: #c8c8cd;
+  font-weight: 600;
+}
+
+.arch-diagram {
+  margin: 16px 0 24px;
+  padding: 20px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid rgba(255,255,255,0.06);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #7e7e86;
+  overflow-x: auto;
+  white-space: pre;
+}
+.arch-diagram .hl-cc { color: #a5b4fc; }
+.arch-diagram .hl-cl { color: #6ee7b7; }
+.arch-diagram .hl-dim { color: #4a4a52; }
+.arch-diagram .hl-w { color: #c8c8cd; }
+
+.cmp-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0 20px;
+  font-size: 13px;
+}
+.cmp-table th {
+  text-align: left;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  white-space: nowrap;
+}
+.cmp-table th:first-child { color: #7e7e86; width: 130px; }
+.cmp-table th.cc { color: #a5b4fc; }
+.cmp-table th.cl { color: #6ee7b7; }
+.cmp-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  vertical-align: top;
+  line-height: 1.6;
+}
+.cmp-table td:first-child {
+  color: #c8c8cd;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.cmp-table td:nth-child(2) { color: #9ca0b0; }
+.cmp-table td:nth-child(3) { color: #8ab0a0; }
+
+.note-block {
+  margin: 12px 0 16px;
+  padding: 14px 18px;
+  border-left: 3px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.02);
+  border-radius: 0 6px 6px 0;
+  font-size: 13px;
+  color: #7e7e86;
+  line-height: 1.7;
+}
+.note-block.insight {
+  border-left-color: rgba(251,191,36,0.3);
+  background: rgba(251,191,36,0.03);
+}
+
+.flow-steps {
+  list-style: none;
+  margin: 12px 0 20px;
+  counter-reset: step;
+}
+.flow-steps li {
+  font-size: 13px;
+  padding: 6px 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+}
+.flow-steps li::before {
+  counter-increment: step;
+  content: counter(step);
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+}
+.flow-steps.cc li::before {
+  background: rgba(99,102,241,0.12);
+  color: #a5b4fc;
+}
+.flow-steps.cl li::before {
+  background: rgba(52,211,153,0.12);
+  color: #6ee7b7;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 14px;
+}
+.tag {
+  font-size: 11px;
+  font-family: 'SF Mono', ui-monospace, monospace;
+  padding: 3px 10px;
+  border-radius: 5px;
+}
+.tag.cc {
+  background: rgba(99,102,241,0.06);
+  border: 1px solid rgba(99,102,241,0.12);
+  color: #a5b4fc;
+}
+.tag.cl {
+  background: rgba(52,211,153,0.06);
+  border: 1px solid rgba(52,211,153,0.12);
+  color: #6ee7b7;
+}
+
+.section-intro {
+  font-size: 14px;
+  color: #9a9aa2;
+  margin-bottom: 16px;
+}
+
+.verdict {
+  margin: 40px 0 0;
+  padding: 24px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(99,102,241,0.04), rgba(52,211,153,0.04));
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.verdict h3 {
+  font-size: 15px;
+  color: #ededef;
+  margin: 0 0 10px;
+}
+.verdict p {
+  font-size: 13px;
+  color: #9a9aa2;
+  margin-bottom: 8px;
+}
+.verdict p:last-child { margin-bottom: 0; }
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+}
+.pill {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+  color: #a0a0a8;
+}
+.pill strong { color: #c8c8cd; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>Claude Code vs ClawLoop</h1>
+<p class="subtitle">两种截然不同的 AI 编程工具架构：一个是 Anthropic 的重型终端 IDE，另一个是基于 OpenClaw Gateway 的轻量桌面客户端。本文基于 2026-03-31 泄露的 Claude Code 源码与 ClawLoop 当前代码进行对比。</p>
+
+<div class="hero-cards">
+  <div class="hero-card cc">
+    <div class="label">Anthropic</div>
+    <div class="name">Claude Code</div>
+    <div class="desc">住在终端里的 Agentic 编程工具。直接调用 Anthropic API，在本地执行文件读写、Shell 命令、搜索等全部操作。</div>
+    <div class="stats">
+      <span class="stat">源文件 <strong>~1,900</strong></span>
+      <span class="stat">代码行 <strong>512K+</strong></span>
+      <span class="stat">运行时 <strong>Bun</strong></span>
+      <span class="stat">UI <strong>React + Ink</strong></span>
+    </div>
+  </div>
+  <div class="hero-card cl">
+    <div class="label">OpenClaw 生态</div>
+    <div class="name">ClawLoop</div>
+    <div class="desc">面向 OpenClaw Gateway 的桌面客户端。自身不调用 LLM，通过 WebSocket RPC 将所有推理与工具执行委托给 Gateway 侧的 Agent。</div>
+    <div class="stats">
+      <span class="stat">架构 <strong>Electron</strong></span>
+      <span class="stat">UI <strong>React + Tailwind</strong></span>
+      <span class="stat">通信 <strong>WebSocket RPC</strong></span>
+      <span class="stat">定位 <strong>薄客户端</strong></span>
+    </div>
+  </div>
+</div>
+
+
+<h2>核心定位差异</h2>
+
+<p class="section-intro">两个项目解决的根本问题不同，这决定了它们在架构上走向完全不同的方向。</p>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>产品形态</td>
+    <td>终端 CLI + TUI</td>
+    <td>Electron 桌面应用</td>
+  </tr>
+  <tr>
+    <td>核心角色</td>
+    <td>全栈 Agent — 推理 + 执行一体</td>
+    <td>会话编排层 — 只管 UI 和任务管理</td>
+  </tr>
+  <tr>
+    <td>LLM 调用</td>
+    <td>本进程内直连 Anthropic API</td>
+    <td>不直接调用；委托给 OpenClaw Gateway</td>
+  </tr>
+  <tr>
+    <td>工具执行</td>
+    <td>本地 ~40 个内建工具 + MCP</td>
+    <td>由 Gateway 背后的 Agent 执行</td>
+  </tr>
+  <tr>
+    <td>目标用户</td>
+    <td>开发者 — 在终端中编码</td>
+    <td>运营/非技术用户 — 管理定时任务和自动化</td>
+  </tr>
+</table>
+
+
+<h2>架构模型</h2>
+
+<p class="section-intro">最本质的差异：Claude Code 是单体厚客户端，ClawLoop 是分布式薄客户端。</p>
+
+<div class="arch-diagram"><span class="hl-dim">┌──────────────────────────────────────────────────────────────────┐</span>
+<span class="hl-dim">│</span> <span class="hl-cc">Claude Code（单体）</span>                                              <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                                                  <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>  <span class="hl-w">用户输入</span> → <span class="hl-cc">Commander CLI</span> → <span class="hl-cc">QueryEngine</span> → <span class="hl-cc">Anthropic API</span>       <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                    ↕                              <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                              <span class="hl-cc">query.ts 循环</span>                        <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                           ↙      ↓      ↘                       <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                    <span class="hl-cc">BashTool</span>  <span class="hl-cc">FileEdit</span>  <span class="hl-cc">GrepTool</span>  ...            <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                           ↘      ↓      ↙                       <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                         <span class="hl-w">结果写回消息列表 → 再次请求</span>                <span class="hl-dim">│</span>
+<span class="hl-dim">└──────────────────────────────────────────────────────────────────┘</span>
+
+<span class="hl-dim">┌──────────────────────────────────────────────────────────────────┐</span>
+<span class="hl-dim">│</span> <span class="hl-cl">ClawLoop（客户端-网关分离）</span>                                       <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                                                  <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>  <span class="hl-w">用户输入</span> → <span class="hl-cl">React UI</span> → IPC → <span class="hl-cl">Electron Main</span> → <span class="hl-cl">WebSocket RPC</span>    <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                                    ↕              <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                          <span class="hl-cl">OpenClaw Gateway</span>        <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                           ↙          ↘           <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                    <span class="hl-cl">Author Agent</span>  <span class="hl-cl">Runner Agent</span>     <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                    (设计任务)      (执行任务)       <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>                                                                  <span class="hl-dim">│</span>
+<span class="hl-dim">│</span>  <span class="hl-w">流式事件</span> ← <span class="hl-cl">event:chat</span> ← Gateway ← Agent LLM 推理 + 工具执行    <span class="hl-dim">│</span>
+<span class="hl-dim">└──────────────────────────────────────────────────────────────────┘</span></div>
+
+
+<h2>推理循环</h2>
+
+<p class="section-intro">两者都实现了"思考-行动"循环，但承载方式截然不同。</p>
+
+<h3>Claude Code — 本地 Agentic Loop</h3>
+<ol class="flow-steps cc">
+  <li>拼装 System Prompt（默认模板 + CLAUDE.md + git 状态 + 协调器文案）</li>
+  <li><code>QueryEngine.submitMessage()</code> 维护消息列表，调 <code>query.ts</code></li>
+  <li><code>query.ts</code> 调 Anthropic API 流式拉 assistant 内容</li>
+  <li>解析 <code>tool_use</code> 块 → <code>canUseTool</code> 权限检查 → 本地执行工具</li>
+  <li>工具结果写回消息列表 → 如果模型未 stop，回到第 3 步</li>
+  <li>可选：token 超预算时 <code>compact</code> 压缩上下文</li>
+</ol>
+
+<h3>ClawLoop — Gateway 代理模式</h3>
+<ol class="flow-steps cl">
+  <li>用户消息通过 <code>chat.send</code> RPC 发给 Gateway</li>
+  <li>Gateway 将消息路由到 Author/Runner Agent</li>
+  <li>Agent 在服务端完成 LLM 推理 + 工具执行的完整循环</li>
+  <li>每一步通过 <code>event:chat</code> 流式推送到客户端</li>
+  <li>客户端只负责渲染 assistant 内容和工具调用气泡</li>
+</ol>
+
+<div class="note-block insight">
+  <strong>关键区别：</strong>Claude Code 的整个 agent 循环（推理 → 工具 → 推理 → ...）全在用户终端进程内完成；ClawLoop 的客户端完全不参与这个循环，只是一个"观众"。
+</div>
+
+
+<h2>工具系统</h2>
+
+<p class="section-intro">Claude Code 内建了一套庞大的工具框架；ClawLoop 则把工具能力完全交给了 Gateway。</p>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>工具数量</td>
+    <td>~40 个内建工具 + MCP 扩展</td>
+    <td>客户端 1 个（<code>task_card</code>）；通用工具在 Gateway 侧</td>
+  </tr>
+  <tr>
+    <td>工具抽象</td>
+    <td><code>Tool&lt;I, O, P&gt;</code> — Zod Schema + 权限模型 + 进度回调</td>
+    <td>无统一抽象；插件 JS 直接导出 description 和 handler</td>
+  </tr>
+  <tr>
+    <td>注册方式</td>
+    <td><code>getAllBaseTools()</code> + feature flag 条件拼接 + MCP 合并</td>
+    <td>Gateway 侧 Agent 预配置；客户端通过 AGENTS.md 描述</td>
+  </tr>
+  <tr>
+    <td>延迟加载</td>
+    <td><code>shouldDefer</code> + <code>ToolSearchTool</code> 按需发现</td>
+    <td>不涉及（客户端不管工具加载）</td>
+  </tr>
+  <tr>
+    <td>扩展协议</td>
+    <td>MCP（Model Context Protocol）原生支持</td>
+    <td>通过 Gateway 插件系统</td>
+  </tr>
+</table>
+
+<h3>Claude Code 工具全景</h3>
+<div class="tag-row">
+  <span class="tag cc">BashTool</span>
+  <span class="tag cc">FileReadTool</span>
+  <span class="tag cc">FileWriteTool</span>
+  <span class="tag cc">FileEditTool</span>
+  <span class="tag cc">GlobTool</span>
+  <span class="tag cc">GrepTool</span>
+  <span class="tag cc">WebFetchTool</span>
+  <span class="tag cc">WebSearchTool</span>
+  <span class="tag cc">AgentTool</span>
+  <span class="tag cc">SkillTool</span>
+  <span class="tag cc">MCPTool</span>
+  <span class="tag cc">LSPTool</span>
+  <span class="tag cc">NotebookEditTool</span>
+  <span class="tag cc">TaskCreateTool</span>
+  <span class="tag cc">SendMessageTool</span>
+  <span class="tag cc">TeamCreateTool</span>
+  <span class="tag cc">EnterPlanModeTool</span>
+  <span class="tag cc">EnterWorktreeTool</span>
+  <span class="tag cc">CronCreateTool</span>
+  <span class="tag cc">SleepTool</span>
+</div>
+
+
+<h2>权限模型</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>粒度</td>
+    <td>每次工具调用都经过权限判定</td>
+    <td>连接级：token + 设备签名 + scope</td>
+  </tr>
+  <tr>
+    <td>决策路径</td>
+    <td>规则引擎 → allow / deny / ask 分支 → 交互式 UI / Bridge 回调</td>
+    <td>Gateway 握手时校验身份，之后信任</td>
+  </tr>
+  <tr>
+    <td>模式</td>
+    <td>default / plan / bypass / auto / coordinator 等多种</td>
+    <td>单一 <code>operator.admin</code> scope</td>
+  </tr>
+  <tr>
+    <td>记忆</td>
+    <td>可持久化 always-allow/deny 规则</td>
+    <td>无客户端侧权限记忆</td>
+  </tr>
+</table>
+
+<div class="note-block">
+  Claude Code 的权限系统是它最复杂的横切关注点之一。<code>useCanUseTool</code> 这个 React Hook 串联了规则引擎、分类器、交互式 UI、Bridge 远程审批、协调器工人等多条路径。ClawLoop 把这个复杂度完全转嫁给了 Gateway 侧。
+</div>
+
+
+<h2>上下文构建</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>系统提示</td>
+    <td>默认模板 + <code>CLAUDE.md</code> + Memory + 协调器文案，多层合并</td>
+    <td><code>AGENTS.md</code> + <code>IDENTITY.md</code> + <code>USER.md</code> 种子到 Agent 工作区</td>
+  </tr>
+  <tr>
+    <td>环境信息</td>
+    <td>git 状态、分支、最近 commit、OS 等实时采集</td>
+    <td>连接时传 client 元数据，无实时环境感知</td>
+  </tr>
+  <tr>
+    <td>压缩</td>
+    <td><code>compact</code> 命令 — token 超限时自动压缩历史</td>
+    <td>Gateway 侧处理，客户端不参与</td>
+  </tr>
+  <tr>
+    <td>缓存</td>
+    <td>会话级 memoize + prompt cache 前缀排序优化</td>
+    <td>无客户端缓存策略</td>
+  </tr>
+</table>
+
+
+<h2>多 Agent 协作</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>模型</td>
+    <td>Coordinator 模式 — 主 Agent 指挥 Worker</td>
+    <td>Author + Runner 双 Agent — 角色固定分工</td>
+  </tr>
+  <tr>
+    <td>通信</td>
+    <td><code>AgentTool</code> / <code>SendMessageTool</code> / <code>TeamCreateTool</code></td>
+    <td>通过 Gateway RPC 路由到不同 Agent 的 session</td>
+  </tr>
+  <tr>
+    <td>隔离</td>
+    <td>Git worktree — 每个 Worker 独立工作树</td>
+    <td>每个 Agent 有独立的托管 workspace 目录</td>
+  </tr>
+  <tr>
+    <td>灵活性</td>
+    <td>动态创建 / 销毁 Worker，任务数不固定</td>
+    <td>固定 2 个 Agent（Author 设计 + Runner 执行）</td>
+  </tr>
+</table>
+
+
+<h2>IDE 集成</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>方式</td>
+    <td>Bridge 双向通信层 — VS Code / JetBrains 扩展</td>
+    <td>无 IDE 扩展；独立 Electron 窗口</td>
+  </tr>
+  <tr>
+    <td>传输</td>
+    <td>本地 IPC + JWT 认证 + v1/v2 协议</td>
+    <td>Electron IPC（渲染 ↔ 主进程）</td>
+  </tr>
+  <tr>
+    <td>特性</td>
+    <td>权限回调、会话恢复、远程控制、多会话 spawn</td>
+    <td>文件打开（<code>shell.openPath</code>）、产物 HTTP 预览</td>
+  </tr>
+</table>
+
+
+<h2>技术栈对比</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>运行时</td>
+    <td>Bun</td>
+    <td>Node（Electron）</td>
+  </tr>
+  <tr>
+    <td>语言</td>
+    <td>TypeScript（strict）</td>
+    <td>TypeScript</td>
+  </tr>
+  <tr>
+    <td>UI 框架</td>
+    <td>React + Ink（终端渲染）</td>
+    <td>React 19 + Tailwind CSS</td>
+  </tr>
+  <tr>
+    <td>CLI 解析</td>
+    <td>Commander.js</td>
+    <td>不涉及</td>
+  </tr>
+  <tr>
+    <td>Schema</td>
+    <td>Zod v4</td>
+    <td>无统一 schema 层</td>
+  </tr>
+  <tr>
+    <td>构建</td>
+    <td>Bun bundler + feature flags DCE</td>
+    <td>Vite 6 + electron-builder</td>
+  </tr>
+  <tr>
+    <td>状态管理</td>
+    <td>React hooks + 内部 state</td>
+    <td>Zustand</td>
+  </tr>
+  <tr>
+    <td>搜索</td>
+    <td>ripgrep（GrepTool）</td>
+    <td>由 Gateway Agent 处理</td>
+  </tr>
+  <tr>
+    <td>协议</td>
+    <td>MCP SDK + LSP</td>
+    <td>自定义 JSON RPC over WebSocket</td>
+  </tr>
+  <tr>
+    <td>遥测</td>
+    <td>OpenTelemetry + gRPC</td>
+    <td>无客户端遥测</td>
+  </tr>
+</table>
+
+
+<h2>设计哲学</h2>
+
+<table class="cmp-table">
+  <tr>
+    <th></th>
+    <th class="cc">Claude Code</th>
+    <th class="cl">ClawLoop</th>
+  </tr>
+  <tr>
+    <td>启动优化</td>
+    <td>并行预取（MDM、Keychain、API preconnect）；lazy require 打破循环依赖</td>
+    <td>常规 Electron 启动；Gateway 连接异步</td>
+  </tr>
+  <tr>
+    <td>代码裁剪</td>
+    <td><code>bun:bundle</code> feature flags — 编译期死代码消除</td>
+    <td>Vite tree-shaking</td>
+  </tr>
+  <tr>
+    <td>可扩展性</td>
+    <td>MCP + Skills + Plugins — 三层扩展机制</td>
+    <td>Gateway 插件 + AGENTS.md 约定</td>
+  </tr>
+  <tr>
+    <td>会话恢复</td>
+    <td><code>/resume</code> + transcript 持久化</td>
+    <td><code>session:continuity-check</code> + context replay 注入</td>
+  </tr>
+  <tr>
+    <td>关注分离</td>
+    <td>工具 / 命令 / 权限 正交分离，但全在一个进程</td>
+    <td>客户端 / Gateway / Agent 三层物理隔离</td>
+  </tr>
+</table>
+
+
+<h2>复杂度分布</h2>
+
+<p class="section-intro">两个项目把复杂度放在了完全不同的地方。</p>
+
+<h3>Claude Code 的复杂度集中在</h3>
+<div class="tag-row">
+  <span class="tag cc">QueryEngine 46K 行</span>
+  <span class="tag cc">Tool 抽象 29K 行</span>
+  <span class="tag cc">权限多路径判定</span>
+  <span class="tag cc">MCP / LSP 集成</span>
+  <span class="tag cc">Bridge 双向通信</span>
+  <span class="tag cc">Coordinator 编排</span>
+  <span class="tag cc">Prompt 多层拼装</span>
+  <span class="tag cc">Token 预算与压缩</span>
+</div>
+
+<h3>ClawLoop 的复杂度集中在</h3>
+<div class="tag-row">
+  <span class="tag cl">任务文件系统管理</span>
+  <span class="tag cl">Gateway 连接与重连</span>
+  <span class="tag cl">Agent 工作区种子</span>
+  <span class="tag cl">会话连续性保持</span>
+  <span class="tag cl">Cron / 运行记录</span>
+  <span class="tag cl">产物 HTTP 预览</span>
+</div>
+
+
+<div class="verdict">
+  <h3>总结</h3>
+  <p>Claude Code 和 ClawLoop 代表了 AI 编程工具的两种范式：</p>
+  <p><strong style="color:#a5b4fc">Claude Code</strong> 是<strong>厚客户端单体</strong>——1,900 个文件、512K 行代码把 LLM 推理、工具执行、权限控制、IDE 集成、多 Agent 协调全部塞进一个终端进程。它的优势是极低延迟和完整的本地控制，代价是巨大的代码复杂度。</p>
+  <p><strong style="color:#6ee7b7">ClawLoop</strong> 是<strong>薄客户端 + 远程 Gateway</strong>——客户端只做会话 UI 和任务管理，所有智能层下沉到 OpenClaw Gateway。它的优势是客户端极度简洁、Agent 可独立升级，代价是依赖网络和 Gateway 的可用性。</p>
+  <p>两者不是互相替代的关系，而是面向不同场景的不同取舍：一个给在终端中深度编码的开发者，一个给需要管理自动化任务流的运营用户。</p>
+</div>
+
+</div>
+</body>
+</html>

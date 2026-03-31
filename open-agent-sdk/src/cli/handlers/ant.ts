@@ -1,0 +1,9 @@
+export function completionHandler(..._args: any[]): any {}
+export function errorHandler(..._args: any[]): any {}
+export function exportHandler(..._args: any[]): any {}
+export function logHandler(..._args: any[]): any {}
+export function taskCreateHandler(..._args: any[]): any {}
+export function taskDirHandler(..._args: any[]): any {}
+export function taskGetHandler(..._args: any[]): any {}
+export function taskListHandler(..._args: any[]): any {}
+export function taskUpdateHandler(..._args: any[]): any {}

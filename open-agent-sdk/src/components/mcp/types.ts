@@ -1,0 +1,14 @@
+export type AgentMcpServerInfo = any;
+export type ClaudeAIServerInfo = any;
+export type ConfigScope = any;
+export type HTTPServerInfo = any;
+export type MCPServerConnection = any;
+export type MCPViewState = any;
+export type McpClaudeAIProxyServerConfig = any;
+export type McpHTTPServerConfig = any;
+export type McpSSEServerConfig = any;
+export type McpStdioServerConfig = any;
+export type SSEServerInfo = any;
+export type ServerInfo = any;
+export type StdioServerInfo = any;
+export type ViewState = any;

@@ -1,0 +1,11 @@
+export type ClaudeAIServerInfo = any;
+export type HTTPServerInfo = any;
+export type MCPServerConnection = any;
+export type McpClaudeAIProxyServerConfig = any;
+export type McpHTTPServerConfig = any;
+export type McpSSEServerConfig = any;
+export type McpStdioServerConfig = any;
+export type PluginSettingsProps = any;
+export type SSEServerInfo = any;
+export type StdioServerInfo = any;
+export type ViewState = any;
