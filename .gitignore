@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+dist-electron/
 cli.mjs
 *.tgz
 
@@ -27,6 +28,10 @@ Thumbs.db
 # Debug / logs
 *.log
 npm-debug.log*
+
+# Local regression artifacts
+app/regression-*.png
+app/window-*.png
 
 # Lock files (keep package.json, ignore locks)
 package-lock.json

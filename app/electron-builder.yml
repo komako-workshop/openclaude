@@ -1,0 +1,15 @@
+appId: com.openclaude.app
+productName: OpenClaude
+directories:
+  buildResources: build
+files:
+  - dist
+  - dist-electron
+  - node_modules/@shipany/open-agent-sdk/**/*
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
