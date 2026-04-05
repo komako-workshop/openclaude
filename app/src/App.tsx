@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Loader2, Settings } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import type { StickToBottomContext } from 'use-stick-to-bottom'
 import { LEGACY_CHAT_STORAGE_KEY, useChatStore } from './stores/chatStore'
 import { useSettingsStore } from './stores/settingsStore'
@@ -267,11 +267,8 @@ export default function App() {
       <Sidebar />
       <div className="flex-1 flex flex-col min-w-0">
         {/* Title bar */}
-        <div className="h-11 shrink-0 flex items-center justify-between px-4 border-b" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
-          <div className="text-[13px] font-medium text-muted-foreground truncate max-w-[50%]">{conv?.title ?? 'OpenClaude'}</div>
-          <button onClick={togglePanel} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} title="Settings">
-            <Settings size={14} />
-          </button>
+        <div className="h-11 shrink-0 flex items-center px-4 border-b" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="text-[13px] font-medium text-muted-foreground truncate">{conv?.title ?? 'OpenClaude'}</div>
         </div>
 
         {/* Messages */}
