@@ -261,6 +261,26 @@ function getCurrentAgentMessages(): unknown[] {
 }
 
 // ---------------------------------------------------------------------------
+// MCP server config (read from ~/.claude.json)
+// ---------------------------------------------------------------------------
+
+function loadMcpServers(): Record<string, unknown> | undefined {
+  try {
+    const claudeJsonPath = join(os.homedir(), '.claude.json')
+    if (!fs.existsSync(claudeJsonPath)) return undefined
+    const data = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf-8'))
+    const servers = data?.mcpServers
+    if (servers && typeof servers === 'object' && Object.keys(servers).length > 0) {
+      console.log(`[mcp] Loaded ${Object.keys(servers).length} MCP server(s): ${Object.keys(servers).join(', ')}`)
+      return servers
+    }
+  } catch (err) {
+    console.error(`[mcp] Failed to load MCP config: ${err}`)
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
 // Agent bridge (lazy-loaded to avoid startup penalty)
 // ---------------------------------------------------------------------------
 
@@ -295,6 +315,7 @@ async function getOrCreateAgent(settings: Settings, conversationId?: string): Pr
   }
 
   const restoredMessages = conversationId ? loadAgentMessages(conversationId, settings) : null
+  const mcpServers = loadMcpServers()
   const { createAgent } = await getAgentModule()
   currentAgent = createAgent({
     model: settings.model,
@@ -304,6 +325,7 @@ async function getOrCreateAgent(settings: Settings, conversationId?: string): Pr
     permissionMode: settings.permissionMode,
     includePartialMessages: true,
     initialMessages: restoredMessages ?? undefined,
+    ...(mcpServers && { mcpServers }),
   })
   currentSettingsKey = key
   currentConversationId = conversationId ?? null
