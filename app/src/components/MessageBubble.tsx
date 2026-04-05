@@ -100,7 +100,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
   }
 
   return (
-    <div className="group my-3">
+    <div className="group mt-5 mb-3">
       {(hasThinking || hasTools) && (
         <ToolActionsGroup
           toolCalls={message.toolCalls ?? []}
