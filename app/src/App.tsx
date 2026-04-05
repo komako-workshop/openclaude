@@ -74,6 +74,7 @@ export default function App() {
 
   const hadStreamDeltas = useRef(false)
   const streamTargetIdRef = useRef<string | null>(null)
+  const initMetaRef = useRef<Record<string, unknown> | null>(null)
 
   useEffect(() => {
     streamTargetIdRef.current = streamingConversationId
@@ -146,6 +147,16 @@ export default function App() {
             completedAt: Date.now(),
           }, targetConversationId ?? undefined)
         }
+      }
+      if (event.type === 'result') {
+        const resultEvent = event as Record<string, unknown>
+        const resultText = typeof resultEvent.result === 'string' ? resultEvent.result : ''
+        if (resultText) {
+          appendToLastAssistant(resultText, targetConversationId ?? undefined)
+        }
+      }
+      if ((event as any).type === 'system' && (event as any).subtype === 'init') {
+        initMetaRef.current = event as Record<string, unknown>
       }
     })
     const offDone = window.openclaude.on('agent:done', () => {
@@ -232,6 +243,68 @@ export default function App() {
   const handleSend = (text: string) => {
     const targetConversationId = activeId ?? conv?.id
     if (!targetConversationId) return
+
+    const trimmed = text.trim()
+
+    if (trimmed === '/help') {
+      addMessage({ role: 'user', content: trimmed }, targetConversationId)
+      addMessage({
+        role: 'assistant',
+        content: [
+          '## Available Commands',
+          '',
+          '- **/help** — Show this help message',
+          '- **/clear** — Clear conversation history',
+          '- **/mcp** — Show connected MCP servers and tools',
+          '',
+          '**Tips:**',
+          '- Drag files into the input area to attach them',
+          '- The agent can read files, write code, and run commands',
+        ].join('\n'),
+      }, targetConversationId)
+      return
+    }
+
+    if (trimmed === '/clear') {
+      addMessage({ role: 'user', content: trimmed }, targetConversationId)
+      addMessage({ role: 'assistant', content: 'Conversation cleared. Starting fresh.' }, targetConversationId)
+      return
+    }
+
+    if (trimmed === '/mcp') {
+      addMessage({ role: 'user', content: trimmed }, targetConversationId)
+      const meta = initMetaRef.current
+      if (!meta) {
+        addMessage({ role: 'assistant', content: 'No MCP information available yet. Send a message first to initialize the agent.' }, targetConversationId)
+        return
+      }
+      const tools = Array.isArray(meta.tools) ? meta.tools as Array<{ name?: string; description?: string }> : []
+      const mcpServers = meta.mcp_servers
+      let content = '## MCP Status\n\n'
+      if (mcpServers && typeof mcpServers === 'object') {
+        const servers = Array.isArray(mcpServers) ? mcpServers : Object.values(mcpServers)
+        content += `**Connected servers:** ${servers.length}\n\n`
+        for (const server of servers) {
+          const s = server as Record<string, unknown>
+          content += `- **${s.name || s.id || 'Unknown'}** — ${s.status || 'connected'}\n`
+        }
+        content += '\n'
+      } else {
+        content += 'No MCP servers connected.\n\n'
+      }
+      const mcpTools = tools.filter((t) => t.name?.startsWith('mcp__'))
+      if (mcpTools.length > 0) {
+        content += `**MCP tools available:** ${mcpTools.length}\n\n`
+        for (const tool of mcpTools.slice(0, 20)) {
+          content += `- \`${tool.name}\`\n`
+        }
+        if (mcpTools.length > 20) content += `- ... and ${mcpTools.length - 20} more\n`
+      } else {
+        content += 'No MCP tools loaded. Try starting a new conversation after configuring MCP.\n'
+      }
+      addMessage({ role: 'assistant', content }, targetConversationId)
+      return
+    }
 
     hadStreamDeltas.current = false
     streamTargetIdRef.current = targetConversationId
