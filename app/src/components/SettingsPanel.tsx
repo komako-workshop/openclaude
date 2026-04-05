@@ -1,22 +1,99 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, useMemo, type ReactNode } from 'react'
 import { X, FolderOpen } from 'lucide-react'
 import { useSettingsStore } from '../stores/settingsStore'
+import type { Settings } from '../types/bridge'
 
-const MODELS = [
-  'anthropic/claude-sonnet-4-6',
-  'anthropic/claude-opus-4-6',
-  'anthropic/claude-haiku-3.5',
-  'google/gemini-2.5-pro-preview',
-  'openai/gpt-4.1',
+type ProviderPreset = {
+  id: string
+  name: string
+  baseURL: string
+  keyPlaceholder: string
+  keyHint: string
+  models: { value: string; label: string }[]
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'anthropic',
+    name: 'Anthropic (Official)',
+    baseURL: 'https://api.anthropic.com',
+    keyPlaceholder: 'sk-ant-...',
+    keyHint: 'Get your key at console.anthropic.com',
+    models: [
+      { value: 'claude-opus-4-6-20260204', label: 'Claude Opus 4.6' },
+      { value: 'claude-sonnet-4-6-20260217', label: 'Claude Sonnet 4.6' },
+      { value: 'claude-opus-4-5-20251124', label: 'Claude Opus 4.5' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    baseURL: 'https://openrouter.ai/api',
+    keyPlaceholder: 'sk-or-v1-...',
+    keyHint: 'Get your key at openrouter.ai/keys',
+    models: [
+      { value: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6' },
+      { value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
+      { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
+      { value: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5' },
+    ],
+  },
+  {
+    id: 'custom',
+    name: 'Custom (Anthropic-compatible)',
+    baseURL: '',
+    keyPlaceholder: 'your-api-key',
+    keyHint: 'Any Anthropic Messages API compatible endpoint (LiteLLM, etc.)',
+    models: [
+      { value: 'claude-opus-4-6-20260204', label: 'Claude Opus 4.6' },
+      { value: 'claude-sonnet-4-6-20260217', label: 'Claude Sonnet 4.6' },
+      { value: 'claude-opus-4-5-20251124', label: 'Claude Opus 4.5' },
+      { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+    ],
+  },
 ]
+
+function detectProvider(baseURL: string): string {
+  if (!baseURL) return 'custom'
+  if (baseURL.includes('openrouter.ai')) return 'openrouter'
+  if (baseURL.includes('api.anthropic.com')) return 'anthropic'
+  return 'custom'
+}
 
 export function SettingsPanel() {
   const { settings, save, togglePanel } = useSettingsStore()
   const [local, setLocal] = useState(settings)
+  const [providerId, setProviderId] = useState(() => detectProvider(settings.baseURL))
 
-  useEffect(() => { setLocal(settings) }, [settings])
+  useEffect(() => {
+    setLocal(settings)
+    setProviderId(detectProvider(settings.baseURL))
+  }, [settings])
+
+  const preset = useMemo(
+    () => PROVIDER_PRESETS.find((p) => p.id === providerId) ?? PROVIDER_PRESETS[2],
+    [providerId],
+  )
 
   const patch = (k: keyof typeof local, v: string) => setLocal({ ...local, [k]: v })
+
+  const handleProviderChange = (nextId: string) => {
+    const nextPreset = PROVIDER_PRESETS.find((p) => p.id === nextId)
+    if (!nextPreset) return
+
+    setProviderId(nextId)
+
+    const updates: Partial<typeof local> = {}
+    if (nextId !== 'custom') {
+      updates.baseURL = nextPreset.baseURL
+    }
+    const currentModelInNewList = nextPreset.models.some((m) => m.value === local.model)
+    if (!currentModelInNewList && nextPreset.models.length > 0) {
+      updates.model = nextPreset.models[0].value
+    }
+    setLocal({ ...local, ...updates })
+  }
 
   const handleSave = () => { save(local); togglePanel() }
 
@@ -37,18 +114,34 @@ export function SettingsPanel() {
         </div>
 
         <div className="px-5 py-4 space-y-4">
-          <Field label="OpenRouter API Key">
-            <input type="password" value={local.apiKey} onChange={(e) => patch('apiKey', e.target.value)}
-              placeholder="sk-or-v1-..." className="input-field" />
+          <Field label="API Provider">
+            <select value={providerId} onChange={(e) => handleProviderChange(e.target.value)} className="input-field">
+              {PROVIDER_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
           </Field>
 
-          <Field label="Base URL">
-            <input value={local.baseURL} onChange={(e) => patch('baseURL', e.target.value)} className="input-field" />
+          <Field label="API Key">
+            <input type="password" value={local.apiKey} onChange={(e) => patch('apiKey', e.target.value)}
+              placeholder={preset.keyPlaceholder} className="input-field" />
+            <p className="text-[11px] mt-1" style={{ color: 'var(--muted-fg)' }}>{preset.keyHint}</p>
           </Field>
+
+          {providerId === 'custom' && (
+            <Field label="Base URL">
+              <input value={local.baseURL} onChange={(e) => patch('baseURL', e.target.value)}
+                placeholder="https://your-proxy.example.com" className="input-field" />
+            </Field>
+          )}
+
+          {providerId !== 'custom' && (
+            <Field label="Base URL">
+              <input value={local.baseURL} readOnly className="input-field opacity-60 cursor-not-allowed" />
+            </Field>
+          )}
 
           <Field label="Model">
             <select value={local.model} onChange={(e) => patch('model', e.target.value)} className="input-field">
-              {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+              {preset.models.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
             </select>
           </Field>
 
@@ -63,7 +156,7 @@ export function SettingsPanel() {
           </Field>
 
           <Field label="Permission Mode">
-            <select value={local.permissionMode} onChange={(e) => patch('permissionMode', e.target.value as any)} className="input-field">
+            <select value={local.permissionMode} onChange={(e) => patch('permissionMode', e.target.value as Settings['permissionMode'])} className="input-field">
               <option value="bypassPermissions">Bypass (auto-approve all)</option>
               <option value="acceptEdits">Accept Edits (auto-approve file ops)</option>
               <option value="default">Default (ask for approval)</option>

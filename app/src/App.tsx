@@ -1,13 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Loader2, Settings } from 'lucide-react'
+import type { StickToBottomContext } from 'use-stick-to-bottom'
 import { LEGACY_CHAT_STORAGE_KEY, useChatStore } from './stores/chatStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { Conversation, ConversationContent, ConversationScrollButton } from './components/Conversation'
 import { Sidebar } from './components/Sidebar'
 import MessageBubble from './components/MessageBubble'
 import { ChatInput } from './components/ChatInput'
 import { SettingsPanel } from './components/SettingsPanel'
 import type { AgentEvent } from './types/bridge'
 import type { PersistedChatState } from './stores/chatStore'
+
+type ScrollSnapshot = {
+  scrollTop: number
+  atBottom: boolean
+}
 
 function loadLegacyChatState(): PersistedChatState | null {
   try {
@@ -26,11 +33,14 @@ export default function App() {
   const {
     active, conversations, activeId, hydratePersistedState, isStreaming, streamingConversationId,
     addMessage, appendToLastAssistant, appendThinking,
-    addToolCall, startStreaming, finishStreaming,
+    addToolCall, updateToolCall, startStreaming, finishStreaming,
   } = useChatStore()
 
   const { loaded, showPanel, load: loadSettings, togglePanel, settings } = useSettingsStore()
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const conversationContextRef = useRef<StickToBottomContext | null>(null)
+  const scrollSnapshotsRef = useRef(new Map<string, ScrollSnapshot>())
+  const activeConversationRef = useRef<string | null>(null)
+  const messageCountRef = useRef(0)
   const [chatLoaded, setChatLoaded] = useState(false)
 
   useEffect(() => { loadSettings() }, [loadSettings])
@@ -104,14 +114,37 @@ export default function App() {
           if (block.type === 'text' && !hadStreamDeltas.current) {
             appendToLastAssistant(block.text, targetConversationId ?? undefined)
           }
-          else if (block.type === 'tool_use' && !hadStreamDeltas.current)
-            addToolCall({
-              id: block.id,
-              toolName: block.name,
-              status: 'running',
-              args: block.input,
-              startedAt: Date.now(),
-            }, targetConversationId ?? undefined)
+          else if (block.type === 'thinking' && !hadStreamDeltas.current) {
+            appendThinking(block.thinking, targetConversationId ?? undefined)
+          }
+          else if (block.type === 'tool_use') {
+            if (hadStreamDeltas.current) {
+              updateToolCall(block.id, {
+                args: block.input,
+              }, targetConversationId ?? undefined)
+            } else {
+              addToolCall({
+                id: block.id,
+                toolName: block.name,
+                status: 'running',
+                args: block.input,
+                startedAt: Date.now(),
+              }, targetConversationId ?? undefined)
+            }
+          }
+        }
+        return
+      }
+      if (event.type === 'user') {
+        const msg = (event as AgentEvent).message
+        if (!msg?.content) return
+        for (const block of msg.content) {
+          if (block.type !== 'tool_result') continue
+          updateToolCall(block.tool_use_id, {
+            status: block.is_error ? 'error' : 'completed',
+            result: block.content,
+            completedAt: Date.now(),
+          }, targetConversationId ?? undefined)
         }
       }
     })
@@ -127,23 +160,74 @@ export default function App() {
       streamTargetIdRef.current = null
     })
     return () => { offEvent(); offDone(); offError() }
-  }, [addMessage, appendToLastAssistant, appendThinking, addToolCall, finishStreaming])
+  }, [addMessage, appendToLastAssistant, appendThinking, addToolCall, updateToolCall, finishStreaming])
 
   const conv = active()
   const messages = conv?.messages ?? []
-  const stickToBottom = useRef(true)
+  const saveScrollSnapshot = useCallback((conversationId: string | null | undefined) => {
+    const scrollElement = conversationContextRef.current?.scrollRef.current
+    if (!conversationId || !scrollElement) return
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const onScroll = () => { stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
+    const maxScrollTop = Math.max(scrollElement.scrollHeight - scrollElement.clientHeight, 0)
+    const scrollTop = Math.min(scrollElement.scrollTop, maxScrollTop)
+    const atBottom = maxScrollTop - scrollTop < 8
+
+    scrollSnapshotsRef.current.set(conversationId, { scrollTop, atBottom })
+  }, [])
+
+  const restoreScrollSnapshot = useCallback((conversationId: string | null | undefined) => {
+    const context = conversationContextRef.current
+    const scrollElement = context?.scrollRef.current
+    if (!conversationId || !context || !scrollElement) return
+
+    const snapshot = scrollSnapshotsRef.current.get(conversationId)
+    if (!snapshot || snapshot.atBottom) {
+      void context.scrollToBottom({ animation: 'instant' })
+      return
+    }
+
+    context.stopScroll()
+    const maxScrollTop = Math.max(scrollElement.scrollHeight - scrollElement.clientHeight, 0)
+    scrollElement.scrollTop = Math.min(snapshot.scrollTop, maxScrollTop)
   }, [])
 
   useEffect(() => {
-    if (stickToBottom.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+    const scrollElement = conversationContextRef.current?.scrollRef.current
+    if (!activeId || !scrollElement) return
+
+    const handleScroll = () => saveScrollSnapshot(activeId)
+
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      handleScroll()
+      scrollElement.removeEventListener('scroll', handleScroll)
+    }
+  }, [activeId, saveScrollSnapshot])
+
+  useLayoutEffect(() => {
+    if (!activeId) return
+
+    const frame = window.requestAnimationFrame(() => {
+      restoreScrollSnapshot(activeId)
+      activeConversationRef.current = activeId
+      messageCountRef.current = messages.length
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeId, restoreScrollSnapshot])
+
+  useEffect(() => {
+    if (activeConversationRef.current !== activeId) return
+
+    if (messages.length > messageCountRef.current) {
+      void conversationContextRef.current?.scrollToBottom({
+        animation: 'smooth',
+        preserveScrollPosition: true,
+      })
+    }
+
+    messageCountRef.current = messages.length
+  }, [activeId, messages.length])
 
   const handleSend = (text: string) => {
     const targetConversationId = activeId ?? conv?.id
@@ -191,13 +275,11 @@ export default function App() {
         </div>
 
         {/* Messages */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto">
-          <div className="max-w-[720px] mx-auto px-5 py-4">
+        <Conversation contextRef={conversationContextRef} className="flex-1">
+          <ConversationContent className="mx-auto w-full max-w-[720px] px-5 py-4">
             {messages.length === 0 && !isStreaming && (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-6">
-                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                  <span className="text-lg font-bold text-primary">O</span>
-                </div>
+                <img src="/icon.png" alt="OpenClaude" className="w-12 h-12 rounded-xl mb-4" />
                 <h1 className="text-lg font-semibold text-foreground mb-1">OpenClaude</h1>
                 <p className="text-[13px] text-muted-foreground max-w-xs">Ask anything. Read files, write code, run commands.</p>
                 {needsSetup && (
@@ -210,8 +292,9 @@ export default function App() {
             <div className="space-y-0">
               {messages.map((msg) => <MessageBubble key={msg.id} message={msg} isStreaming={isStreaming} />)}
             </div>
-          </div>
-        </div>
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
 
         <ChatInput onSend={handleSend} onAbort={handleAbort} isStreaming={isStreaming} />
       </div>

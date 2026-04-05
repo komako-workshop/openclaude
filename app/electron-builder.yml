@@ -2,14 +2,23 @@ appId: com.openclaude.app
 productName: OpenClaude
 directories:
   buildResources: build
+npmRebuild: true
+nodeGypRebuild: false
+buildDependenciesFromSource: false
 files:
   - dist
   - dist-electron
-  - node_modules/@shipany/open-agent-sdk/**/*
+  - package.json
+  - "!node_modules/@shipany/open-agent-sdk/src/**"
+  - "!node_modules/**/{test,tests,__tests__,docs,example,examples}/**"
+  - "!node_modules/**/*.{ts,tsx,map,md}"
+asar: true
+asarUnpack:
+  - "node_modules/@shipany/open-agent-sdk/**"
 mac:
+  icon: build/icon.icns
   target:
     - target: dmg
       arch:
         - arm64
-        - x64
   category: public.app-category.developer-tools

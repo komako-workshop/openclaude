@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } from 'electron'
 import { dirname, join } from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -65,7 +65,7 @@ type PersistedAgentSession = {
 const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
   baseURL: 'https://openrouter.ai/api',
-  model: 'anthropic/claude-sonnet-4-6',
+  model: 'anthropic/claude-sonnet-4.6',
   cwd: os.homedir(),
   permissionMode: 'bypassPermissions',
 }
@@ -436,6 +436,10 @@ function registerIPC() {
 // ---------------------------------------------------------------------------
 
 function createWindow() {
+  const iconPath = isDev
+    ? join(__dirname, '../../public/icon.png')
+    : join(__dirname, '../../dist/icon.png')
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -445,6 +449,7 @@ function createWindow() {
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 18 },
     backgroundColor: '#ffffff',
+    icon: fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : undefined,
     webPreferences: {
       preload: PRELOAD_PATH,
       contextIsolation: true,

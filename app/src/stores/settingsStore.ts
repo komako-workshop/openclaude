@@ -17,7 +17,7 @@ type SettingsState = {
 const DEFAULTS: Settings = {
   apiKey: '',
   baseURL: 'https://openrouter.ai/api',
-  model: 'anthropic/claude-sonnet-4-6',
+  model: 'anthropic/claude-sonnet-4.6',
   cwd: '',
   permissionMode: 'bypassPermissions',
 }

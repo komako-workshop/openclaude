@@ -27,6 +27,7 @@ export interface Conversation {
   messages: ChatMessage[]
   createdAt: number
   updatedAt: number
+  pinned?: boolean
 }
 
 export interface PersistedChatState {
@@ -103,6 +104,7 @@ interface ChatState extends PersistedChatState {
   newConversation: () => void
   switchTo: (id: string) => void
   deleteConversation: (id: string) => void
+  togglePin: (id: string) => void
 
   addMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'>, conversationId?: string) => void
   appendToLastAssistant: (textDelta: string, conversationId?: string) => void
@@ -187,6 +189,14 @@ export const useChatStore = create<ChatState>((set, get) => {
         activeId: activeId === id ? next[0].id : activeId,
         isStreaming: streamingConversationId === id ? false : get().isStreaming,
         streamingConversationId: streamingConversationId === id ? null : streamingConversationId,
+      })
+    },
+
+    togglePin: (id) => {
+      set({
+        conversations: get().conversations.map((c) =>
+          c.id === id ? { ...c, pinned: !c.pinned } : c,
+        ),
       })
     },
 

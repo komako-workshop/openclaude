@@ -1,13 +1,36 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeHighlight from 'rehype-highlight'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { Streamdown } from 'streamdown'
+import { useStickToBottomContext } from 'use-stick-to-bottom'
+import { cjk } from '@streamdown/cjk'
+import { createCodePlugin } from '@streamdown/code'
+import { math } from '@streamdown/math'
+import { mermaid } from '@streamdown/mermaid'
 import {
   ChevronRight, ChevronDown, AlertTriangle, Copy, Check,
-  Brain, Wrench, ChevronUp,
+  Brain, Wrench, ChevronUp, Search, Terminal, FileText,
+  Loader2, CheckCircle2, XCircle,
 } from 'lucide-react'
 import type { ChatMessage, ToolCallInfo } from '../stores/chatStore'
 
 interface Props { message: ChatMessage; isStreaming?: boolean }
+
+const rawCodePlugin = createCodePlugin()
+const safeCodePlugin = {
+  ...rawCodePlugin,
+  highlight(params: Parameters<typeof rawCodePlugin.highlight>[0], callback?: Parameters<typeof rawCodePlugin.highlight>[1]) {
+    if (!rawCodePlugin.supportsLanguage(params.language)) return null
+    return rawCodePlugin.highlight(params, callback)
+  },
+}
+const streamdownPlugins = { cjk, code: safeCodePlugin, math, mermaid }
+const COLLAPSE_HEIGHT = 300
+const BUFFER_WORD_THRESHOLD = 40
+const BUFFER_MAX_MS = 2500
+const CONTEXT_TOOLS = new Set([
+  'read', 'readfile', 'read_file',
+  'glob', 'grep', 'search', 'search_files', 'find_files',
+  'websearch', 'web_search', 'ls', 'list', 'list_files',
+])
 
 export default function MessageBubble({ message }: Props) {
   if (message.role === 'user') return <UserMessage message={message} />
@@ -16,12 +39,11 @@ export default function MessageBubble({ message }: Props) {
 
 // ── User message ─────────────────────────────────────────────────────
 
-const COLLAPSE_HEIGHT = 300
-
 function UserMessage({ message }: { message: ChatMessage }) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const { stopScroll } = useStickToBottomContext()
 
   useEffect(() => {
     if (ref.current) setOverflows(ref.current.scrollHeight > COLLAPSE_HEIGHT)
@@ -46,7 +68,11 @@ function UserMessage({ message }: { message: ChatMessage }) {
             style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
         )}
         {overflows && (
-          <button onClick={() => setExpanded(!expanded)}
+          <button onClick={() => {
+            const willExpand = !expanded
+            setExpanded(willExpand)
+            if (willExpand) stopScroll()
+          }}
             className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
             {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
             <span>{expanded ? 'Collapse' : 'Expand'}</span>
@@ -60,9 +86,9 @@ function UserMessage({ message }: { message: ChatMessage }) {
 // ── Assistant message ────────────────────────────────────────────────
 
 function AssistantMessage({ message }: { message: ChatMessage }) {
-  const [thinkingOpen, setThinkingOpen] = useState(false)
   const hasThinking = Boolean(message.thinkingContent?.trim())
   const hasTools = Boolean(message.toolCalls?.length)
+  const bufferedContent = useBufferedContent(message.content, Boolean(message.isStreaming))
 
   if (message.isError) {
     return (
@@ -75,32 +101,19 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
 
   return (
     <div className="group my-3">
-      {/* Thinking */}
-      {hasThinking && (
-        <div className="mb-2">
-          <button onClick={() => setThinkingOpen(!thinkingOpen)}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-            <Brain size={12} />
-            {thinkingOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            <span className="italic">Thinking…</span>
-          </button>
-          {thinkingOpen && (
-            <div className="mt-1.5 text-xs italic rounded-lg p-3 border whitespace-pre-wrap max-h-64 overflow-y-auto leading-relaxed"
-              style={{ background: 'var(--muted)', color: 'var(--muted-fg)', borderColor: 'var(--border)' }}>
-              {message.thinkingContent}
-            </div>
-          )}
-        </div>
+      {(hasThinking || hasTools) && (
+        <ToolActionsGroup
+          toolCalls={message.toolCalls ?? []}
+          thinkingContent={message.thinkingContent}
+          isStreaming={Boolean(message.isStreaming)}
+        />
       )}
 
-      {/* Tool calls */}
-      {hasTools && <ToolCallGroup toolCalls={message.toolCalls!} />}
-
       {/* Text content */}
-      {message.content && (
+      {bufferedContent && (
         <div className="relative">
           <div className="markdown-body text-[14px] leading-relaxed">
-            <MarkdownRenderer text={message.content} />
+            <MarkdownRenderer text={bufferedContent} isStreaming={Boolean(message.isStreaming)} />
             {message.isStreaming && <StreamingCursor />}
           </div>
           <div className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -110,7 +123,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
       )}
 
       {/* Streaming: no content yet */}
-      {message.isStreaming && !message.content && !hasThinking && !hasTools && (
+      {message.isStreaming && !bufferedContent && !hasThinking && !hasTools && (
         <ThinkingPhaseLabel />
       )}
 
@@ -147,6 +160,45 @@ function ThinkingPhaseLabel() {
       <span className="shimmer">{text}</span>
     </div>
   )
+}
+
+function useBufferedContent(rawContent: string, isStreaming: boolean): string {
+  const [bypassed, setBypassed] = useState(false)
+  const timerRef = useRef<number | null>(null)
+  const hasStructuredBlock = /```/.test(rawContent)
+  const wordCount = rawContent.split(/\s+/).filter(Boolean).length
+
+  useEffect(() => {
+    if (!isStreaming || !rawContent) {
+      setBypassed(false)
+      if (timerRef.current) window.clearTimeout(timerRef.current)
+      timerRef.current = null
+      return
+    }
+
+    if (hasStructuredBlock || wordCount >= BUFFER_WORD_THRESHOLD) {
+      setBypassed(true)
+      if (timerRef.current) window.clearTimeout(timerRef.current)
+      timerRef.current = null
+      return
+    }
+
+    if (!timerRef.current) {
+      timerRef.current = window.setTimeout(() => {
+        setBypassed(true)
+        timerRef.current = null
+      }, BUFFER_MAX_MS)
+    }
+  }, [hasStructuredBlock, isStreaming, rawContent, wordCount])
+
+  useEffect(() => () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current)
+  }, [])
+
+  if (!isStreaming) return rawContent
+  if (!rawContent) return ''
+  if (bypassed || hasStructuredBlock || wordCount >= BUFFER_WORD_THRESHOLD) return rawContent
+  return ''
 }
 
 // ── Streaming status bar ─────────────────────────────────────────────
@@ -190,57 +242,203 @@ function StreamingStatusBar({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
 
 // ── Tool call group ──────────────────────────────────────────────────
 
-function ToolCallGroup({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
-  const [open, setOpen] = useState(false)
-  const allDone = toolCalls.every((tc) => tc.status !== 'running')
+function ToolActionsGroup({
+  toolCalls,
+  thinkingContent,
+  isStreaming,
+}: {
+  toolCalls: ToolCallInfo[]
+  thinkingContent?: string
+  isStreaming?: boolean
+}) {
+  const [open, setOpen] = useState(Boolean(isStreaming || thinkingContent))
+  const segments = useMemo(() => computeToolSegments(toolCalls), [toolCalls])
   const runningCount = toolCalls.filter((tc) => tc.status === 'running').length
+  const hasTools = toolCalls.length > 0
+  const { stopScroll } = useStickToBottomContext()
+
+  useEffect(() => {
+    if (isStreaming && (thinkingContent || toolCalls.length > 0)) {
+      setOpen(true)
+    }
+  }, [isStreaming, thinkingContent, toolCalls.length])
+
+  if (!hasTools && !thinkingContent) return null
+  if (!hasTools && thinkingContent) {
+    return (
+      <div className="mb-3">
+        <ThinkingRow content={thinkingContent} isStreaming={isStreaming} />
+      </div>
+    )
+  }
 
   return (
     <div className="mb-3">
-      <button onClick={() => setOpen(!open)}
+      <button onClick={() => {
+        const willOpen = !open
+        setOpen(willOpen)
+        if (willOpen) stopScroll()
+      }}
         className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
         <Wrench size={12} />
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <span>
-          {allDone ? `Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}` : <span className="shimmer">Running {runningCount} tool{runningCount > 1 ? 's' : ''}…</span>}
+          {runningCount > 0
+            ? <span className="shimmer">Running {runningCount} tool{runningCount > 1 ? 's' : ''}…</span>
+            : `Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}`}
         </span>
       </button>
       {open && (
         <div className="mt-1.5 space-y-1 ml-1">
-          {toolCalls.map((tc) => <ToolCallItem key={tc.id} toolCall={tc} />)}
+          {thinkingContent && <ThinkingRow content={thinkingContent} isStreaming={isStreaming} />}
+          {segments.map((segment, index) => segment.kind === 'context'
+            ? <ContextToolGroup key={`context-${index}`} toolCalls={segment.toolCalls} />
+            : <ToolCallItem key={segment.toolCall.id} toolCall={segment.toolCall} />)}
         </div>
       )}
     </div>
   )
 }
 
-function ToolCallItem({ toolCall }: { toolCall: ToolCallInfo }) {
-  const [expanded, setExpanded] = useState(false)
-  const statusColor = toolCall.status === 'running' ? 'var(--warning)' : toolCall.status === 'completed' ? 'var(--success)' : 'var(--destructive)'
-  const statusIcon = toolCall.status === 'running' ? '⏳' : toolCall.status === 'completed' ? '✓' : '✗'
+function ThinkingRow({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
+  const [expanded, setExpanded] = useState(Boolean(isStreaming))
+  const { stopScroll } = useStickToBottomContext()
 
-  const command = (toolCall.toolName === 'Bash' || toolCall.toolName === 'bash') && toolCall.args
-    ? ((toolCall.args as Record<string, string>).command ?? '') : ''
-  const filePath = !command && toolCall.args
-    ? ((toolCall.args as Record<string, string>).path ?? (toolCall.args as Record<string, string>).file_path ?? '') : ''
-  const subtitle = command ? `$ ${command}` : filePath || ''
-  const duration = toolCall.completedAt && toolCall.startedAt ? ((toolCall.completedAt - toolCall.startedAt) / 1000).toFixed(1) : null
+  useEffect(() => {
+    if (isStreaming) setExpanded(true)
+  }, [isStreaming])
+
+  const summary = useMemo(() => {
+    const heading = content.match(/^#{1,4}\s+(.+)$/m)
+    if (heading?.[1]) return heading[1]
+    const bold = content.match(/\*\*(.+?)\*\*/)
+    if (bold?.[1]) return bold[1]
+    return isStreaming ? 'Thinking…' : 'Thought'
+  }, [content, isStreaming])
 
   return (
-    <div className="rounded-lg border overflow-hidden" style={{ background: 'var(--muted)', borderColor: 'var(--border)' }}>
-      <button onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:opacity-80 transition-opacity">
-        <span style={{ color: statusColor }}>{statusIcon}</span>
-        <span className="font-mono font-medium" style={{ color: 'var(--primary)' }}>{toolCall.toolName}</span>
-        {subtitle && <span className="text-muted-foreground truncate font-mono min-w-0 flex-1 text-left">{subtitle.length > 60 ? subtitle.slice(0, 60) + '…' : subtitle}</span>}
-        {toolCall.status === 'running' && <span className="shimmer ml-auto shrink-0">running…</span>}
-        {duration && <span className="text-muted-foreground ml-auto shrink-0">{duration}s</span>}
-        {expanded ? <ChevronDown size={11} className="text-muted-foreground shrink-0" /> : <ChevronRight size={11} className="text-muted-foreground shrink-0" />}
+    <div>
+      <button onClick={() => {
+        const willExpand = !expanded
+        setExpanded(willExpand)
+        if (willExpand) stopScroll()
+      }}
+        className="flex w-full items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/40 rounded-sm transition-colors">
+        <Brain size={14} className="shrink-0 text-muted-foreground" />
+        {expanded ? <ChevronDown size={11} className="shrink-0 text-muted-foreground/60" /> : <ChevronRight size={11} className="shrink-0 text-muted-foreground/60" />}
+        <span className="font-mono text-muted-foreground/70 truncate flex-1 text-left">
+          {isStreaming ? <span className="shimmer">{summary}</span> : summary}
+        </span>
       </button>
       {expanded && (
+        <div className="ml-6 px-2 py-1.5 text-xs rounded-md border"
+          style={{ background: 'var(--muted)', borderColor: 'var(--border)' }}>
+          <MarkdownRenderer text={content} isStreaming={false} className="markdown-body text-xs leading-relaxed text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+type ToolSegment =
+  | { kind: 'context'; toolCalls: ToolCallInfo[] }
+  | { kind: 'single'; toolCall: ToolCallInfo }
+
+function computeToolSegments(toolCalls: ToolCallInfo[]): ToolSegment[] {
+  const segments: ToolSegment[] = []
+  let buffer: ToolCallInfo[] = []
+
+  const flush = () => {
+    if (buffer.length >= 3) {
+      segments.push({ kind: 'context', toolCalls: buffer })
+    } else {
+      for (const toolCall of buffer) segments.push({ kind: 'single', toolCall })
+    }
+    buffer = []
+  }
+
+  for (const toolCall of toolCalls) {
+    if (CONTEXT_TOOLS.has(toolCall.toolName.toLowerCase())) {
+      buffer.push(toolCall)
+    } else {
+      flush()
+      segments.push({ kind: 'single', toolCall })
+    }
+  }
+  flush()
+  return segments
+}
+
+function ContextToolGroup({ toolCalls }: { toolCalls: ToolCallInfo[] }) {
+  const [expanded, setExpanded] = useState(false)
+  const hasRunning = toolCalls.some((toolCall) => toolCall.status === 'running')
+  const { stopScroll } = useStickToBottomContext()
+
+  return (
+    <div>
+      <button onClick={() => {
+        const willExpand = !expanded
+        setExpanded(willExpand)
+        if (willExpand) stopScroll()
+      }}
+        className="flex w-full items-center gap-2 px-2 py-1 min-h-[28px] text-xs hover:bg-muted/40 rounded-sm transition-colors">
+        <Search size={14} className="shrink-0 text-muted-foreground" />
+        {expanded ? <ChevronDown size={11} className="shrink-0 text-muted-foreground/60" /> : <ChevronRight size={11} className="shrink-0 text-muted-foreground/60" />}
+        <span className="font-medium text-muted-foreground">
+          {hasRunning ? `Gathering context (${toolCalls.length})` : `Gathered context (${toolCalls.length})`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="ml-6 border-l-2 pl-2 space-y-1" style={{ borderColor: 'var(--border)' }}>
+          {toolCalls.map((toolCall) => <ToolCallItem key={toolCall.id} toolCall={toolCall} nested />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ToolCallItem({ toolCall, nested = false }: { toolCall: ToolCallInfo; nested?: boolean }) {
+  return <ToolCallItemInner toolCall={toolCall} nested={nested} />
+}
+
+function ToolCallItemInner({ toolCall, nested }: { toolCall: ToolCallInfo; nested: boolean }) {
+  const [expanded, setExpanded] = useState(toolCall.status === 'running')
+  const statusColor = toolCall.status === 'running' ? 'var(--warning)' : toolCall.status === 'completed' ? 'var(--success)' : 'var(--destructive)'
+  const command = toolCall.args?.command && typeof toolCall.args.command === 'string' ? toolCall.args.command : ''
+  const path = getToolPath(toolCall.args)
+  const pattern = getToolPattern(toolCall.args)
+  const duration = toolCall.completedAt && toolCall.startedAt ? ((toolCall.completedAt - toolCall.startedAt) / 1000).toFixed(1) : null
+  const summary = getToolSummary(toolCall, command, path, pattern)
+  const Icon = getToolIcon(toolCall.toolName)
+  const canExpand = Boolean(toolCall.args || toolCall.result)
+  const { stopScroll } = useStickToBottomContext()
+
+  useEffect(() => {
+    if (toolCall.status === 'running') setExpanded(true)
+  }, [toolCall.status])
+
+  return (
+    <div className={nested ? '' : 'rounded-lg border overflow-hidden'} style={nested ? undefined : { background: 'var(--muted)', borderColor: 'var(--border)' }}>
+      <button onClick={() => {
+        if (!canExpand) return
+        const willExpand = !expanded
+        setExpanded(willExpand)
+        if (willExpand) stopScroll()
+      }}
+        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/40 transition-colors">
+        <Icon size={14} className="shrink-0" style={{ color: 'var(--muted-fg)' }} />
+        <span className="font-medium shrink-0" style={{ color: 'var(--primary)' }}>{toolCall.toolName}</span>
+        <span className="truncate font-mono min-w-0 flex-1 text-left text-muted-foreground">{summary}</span>
+        {toolCall.status === 'running' && <Loader2 size={13} className="shrink-0 animate-spin" style={{ color: statusColor }} />}
+        {toolCall.status === 'completed' && <CheckCircle2 size={13} className="shrink-0" style={{ color: statusColor }} />}
+        {toolCall.status === 'error' && <XCircle size={13} className="shrink-0" style={{ color: statusColor }} />}
+        {duration && <span className="text-muted-foreground shrink-0">{duration}s</span>}
+        {canExpand && (expanded ? <ChevronDown size={11} className="text-muted-foreground shrink-0" /> : <ChevronRight size={11} className="text-muted-foreground shrink-0" />)}
+      </button>
+      {expanded && canExpand && (
         <div className="px-3 pb-2 text-xs space-y-1.5 border-t pt-1.5" style={{ borderColor: 'var(--border)' }}>
           {toolCall.args && <pre className="rounded p-2 overflow-x-auto text-muted-foreground whitespace-pre-wrap" style={{ background: 'var(--bg)' }}>{JSON.stringify(toolCall.args, null, 2)}</pre>}
-          {toolCall.result && <pre className="rounded p-2 overflow-x-auto text-muted-foreground whitespace-pre-wrap max-h-48" style={{ background: 'var(--bg)' }}>{toolCall.result}</pre>}
+          {toolCall.result && <pre className="rounded p-2 overflow-x-auto text-muted-foreground whitespace-pre-wrap max-h-56" style={{ background: 'var(--bg)' }}>{toolCall.result}</pre>}
         </div>
       )}
     </div>
@@ -249,72 +447,81 @@ function ToolCallItem({ toolCall }: { toolCall: ToolCallInfo }) {
 
 // ── Markdown renderer ────────────────────────────────────────────────
 
-function MarkdownRenderer({ text }: { text: string }) {
+function getToolIcon(toolName: string) {
+  const lower = toolName.toLowerCase()
+  if (['bash', 'shell', 'execute', 'run'].includes(lower)) return Terminal
+  if (CONTEXT_TOOLS.has(lower)) return Search
+  if (['write', 'edit', 'writefile', 'create_file', 'notebookedit'].includes(lower)) return FileText
+  if (getToolSummaryByPathType(lower)) return FileText
+  return Wrench
+}
+
+function getToolSummaryByPathType(toolName: string): boolean {
+  return ['read', 'readfile', 'write', 'edit', 'writefile', 'create_file', 'glob', 'grep', 'search'].includes(toolName)
+}
+
+function getToolPath(args?: Record<string, unknown>) {
+  if (!args) return ''
+  const candidate = args.path ?? args.file_path ?? args.filePath
+  return typeof candidate === 'string' ? candidate : ''
+}
+
+function getToolPattern(args?: Record<string, unknown>) {
+  if (!args) return ''
+  const candidate = args.pattern ?? args.query ?? args.glob
+  return typeof candidate === 'string' ? candidate : ''
+}
+
+function getToolSummary(toolCall: ToolCallInfo, command: string, path: string, pattern: string) {
+  if (command) return `$ ${truncateMiddle(command, 80)}`
+  if (pattern) return truncateMiddle(pattern, 80)
+  if (path) return truncateMiddle(path, 80)
+  return toolCall.toolName
+}
+
+function truncateMiddle(value: string, maxLength: number) {
+  if (value.length <= maxLength) return value
+  const head = Math.ceil((maxLength - 1) / 2)
+  const tail = Math.floor((maxLength - 1) / 2)
+  return `${value.slice(0, head)}…${value.slice(value.length - tail)}`
+}
+
+function MarkdownLink({ href, children, ...props }: ComponentProps<'a'> & { node?: unknown }) {
   return (
-    <ReactMarkdown rehypePlugins={[rehypeHighlight]}
-      components={{
-        pre({ children }) { return <div className="relative group/code my-3">{children}</div> },
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || '')
-          const codeStr = String(children).replace(/\n$/, '')
-          const isBlock = match || codeStr.includes('\n')
-          if (isBlock) {
-            const lang = match?.[1] || ''
-            return <CodeBlockWithCopy code={codeStr} lang={lang} collapsible={codeStr.split('\n').length > 20} />
-          }
-          return <code {...props}>{children}</code>
-        },
-        a({ href, children }) {
-          return (
-            <a href={href} onClick={(e) => { e.preventDefault(); if (href) window.openclaude.invoke('shell:openExternal', href) }}
-              className="cursor-pointer">{children}</a>
-          )
-        },
-      }}>
-      {text}
-    </ReactMarkdown>
+    <a
+      {...props}
+      href={href}
+      onClick={(event) => {
+        event.preventDefault()
+        if (href) void window.openclaude.invoke('shell:openExternal', href)
+      }}
+      className="cursor-pointer"
+    >
+      {children}
+    </a>
   )
 }
 
-// ── Code block ───────────────────────────────────────────────────────
-
-function CodeBlockWithCopy({ code, lang, collapsible }: { code: string; lang: string; collapsible: boolean }) {
-  const [copied, setCopied] = useState(false)
-  const [expanded, setExpanded] = useState(!collapsible)
-  const lines = code.split('\n')
-  const displayCode = expanded ? code : lines.slice(0, 15).join('\n')
-
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }, [code])
-
+function MarkdownRenderer({
+  text,
+  isStreaming,
+  className,
+}: {
+  text: string
+  isStreaming: boolean
+  className?: string
+}) {
   return (
-    <div className="rounded-lg border overflow-hidden my-3" style={{ borderColor: 'var(--code-border)' }}>
-      <div className="flex items-center justify-between px-3 py-1.5 border-b text-[11px]"
-        style={{ background: 'var(--code-header)', borderColor: 'var(--code-border)' }}>
-        <span className="font-mono uppercase text-muted-foreground">{lang || 'text'}</span>
-        <button onClick={handleCopy} className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
-          {copied ? <Check size={12} style={{ color: 'var(--success)' }} /> : <Copy size={12} />}
-          <span>{copied ? 'Copied' : 'Copy'}</span>
-        </button>
-      </div>
-      <div className="overflow-x-auto relative">
-        <ReactMarkdown rehypePlugins={[rehypeHighlight]}>{`\`\`\`${lang}\n${displayCode}\n\`\`\``}</ReactMarkdown>
-        {collapsible && !expanded && (
-          <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none"
-            style={{ background: `linear-gradient(to top, var(--code-bg), transparent)` }} />
-        )}
-      </div>
-      {collapsible && (
-        <button onClick={() => setExpanded(!expanded)}
-          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] text-muted-foreground hover:text-foreground border-t transition-colors"
-          style={{ background: 'var(--code-header)', borderColor: 'var(--code-border)' }}>
-          {expanded ? <><ChevronUp size={11} /><span>Collapse</span></> : <><ChevronDown size={11} /><span>Expand all {lines.length} lines</span></>}
-        </button>
-      )}
-    </div>
+    <Streamdown
+      mode={isStreaming ? 'streaming' : 'static'}
+      plugins={streamdownPlugins}
+      controls={false}
+      animated={false}
+      className={className}
+      components={{ a: MarkdownLink }}
+    >
+      {text}
+    </Streamdown>
   )
 }
 

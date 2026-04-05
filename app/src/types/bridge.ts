@@ -9,15 +9,22 @@ export type Settings = {
 }
 
 export type AgentEvent = {
-  type: 'assistant' | 'result' | 'tool_use' | string
+  type: 'assistant' | 'user' | 'result' | 'tool_use' | string
   subtype?: string
   message?: {
     content: Array<
       | { type: 'text'; text: string }
       | { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> }
-      | { type: 'tool_result'; tool_use_id: string; content: string }
+      | { type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }
       | { type: 'thinking'; thinking: string }
     >
+  }
+  toolUseResult?: {
+    stdout?: string
+    stderr?: string
+    interrupted?: boolean
+    isImage?: boolean
+    noOutputExpected?: boolean
   }
   usage?: { input_tokens: number; output_tokens: number }
   num_turns?: number

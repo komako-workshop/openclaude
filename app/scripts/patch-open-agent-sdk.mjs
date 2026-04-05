@@ -70,6 +70,22 @@ You may provide well-known URLs when the user asks (official websites, documenta
     ],
   },
   {
+    file: join(root, 'utils', 'betas.js'),
+    replacements: [
+      {
+        from: `export const getAllModelBetas = memoize((model) => {
+    const betaHeaders = [];
+    const isHaiku = getCanonicalName(model).includes('haiku');`,
+        to: `export const getAllModelBetas = memoize((model) => {
+    if (typeof model === 'string' && !model.startsWith('anthropic/') && !model.startsWith('claude')) {
+        return [];
+    }
+    const betaHeaders = [];
+    const isHaiku = getCanonicalName(model).includes('haiku');`,
+      },
+    ],
+  },
+  {
     file: join(root, 'constants', 'outputStyles.js'),
     replacements: [
       {

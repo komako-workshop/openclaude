@@ -1,3 +1,6 @@
+@import "katex/dist/katex.min.css";
+@import "streamdown/styles.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -27,6 +30,12 @@
   --code-border: #e7e5e4;
   --code-header: #fafaf9;
   --ring: #6d28d9;
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card-foreground: var(--card-fg);
+  --muted-foreground: var(--muted-fg);
+  --primary-foreground: var(--primary-fg);
+  --radius: 0.75rem;
 }
 
 /* ── Dark theme ───────────────────────────────────────────────────── */
@@ -54,6 +63,12 @@
   --code-border: rgba(255, 255, 255, 0.1);
   --code-header: #1c1917;
   --ring: #8b5cf6;
+  --background: var(--bg);
+  --foreground: var(--fg);
+  --card-foreground: var(--card-fg);
+  --muted-foreground: var(--muted-fg);
+  --primary-foreground: var(--primary-fg);
+  --radius: 0.75rem;
 }
 
 @layer base {

@@ -36,3 +36,5 @@ app/window-*.png
 # Lock files (keep package.json, ignore locks)
 package-lock.json
 pnpm-lock.yaml
+.gstack/
+.gstack/
