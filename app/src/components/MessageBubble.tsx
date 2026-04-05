@@ -251,17 +251,11 @@ function ToolActionsGroup({
   thinkingContent?: string
   isStreaming?: boolean
 }) {
-  const [open, setOpen] = useState(Boolean(isStreaming || thinkingContent))
+  const [open, setOpen] = useState(false)
   const segments = useMemo(() => computeToolSegments(toolCalls), [toolCalls])
   const runningCount = toolCalls.filter((tc) => tc.status === 'running').length
   const hasTools = toolCalls.length > 0
   const { stopScroll } = useStickToBottomContext()
-
-  useEffect(() => {
-    if (isStreaming && (thinkingContent || toolCalls.length > 0)) {
-      setOpen(true)
-    }
-  }, [isStreaming, thinkingContent, toolCalls.length])
 
   if (!hasTools && !thinkingContent) return null
   if (!hasTools && thinkingContent) {
@@ -301,12 +295,8 @@ function ToolActionsGroup({
 }
 
 function ThinkingRow({ content, isStreaming }: { content: string; isStreaming?: boolean }) {
-  const [expanded, setExpanded] = useState(Boolean(isStreaming))
+  const [expanded, setExpanded] = useState(false)
   const { stopScroll } = useStickToBottomContext()
-
-  useEffect(() => {
-    if (isStreaming) setExpanded(true)
-  }, [isStreaming])
 
   const summary = useMemo(() => {
     const heading = content.match(/^#{1,4}\s+(.+)$/m)
@@ -402,7 +392,7 @@ function ToolCallItem({ toolCall, nested = false }: { toolCall: ToolCallInfo; ne
 }
 
 function ToolCallItemInner({ toolCall, nested }: { toolCall: ToolCallInfo; nested: boolean }) {
-  const [expanded, setExpanded] = useState(toolCall.status === 'running')
+  const [expanded, setExpanded] = useState(false)
   const statusColor = toolCall.status === 'running' ? 'var(--warning)' : toolCall.status === 'completed' ? 'var(--success)' : 'var(--destructive)'
   const command = toolCall.args?.command && typeof toolCall.args.command === 'string' ? toolCall.args.command : ''
   const path = getToolPath(toolCall.args)
@@ -412,10 +402,6 @@ function ToolCallItemInner({ toolCall, nested }: { toolCall: ToolCallInfo; neste
   const Icon = getToolIcon(toolCall.toolName)
   const canExpand = Boolean(toolCall.args || toolCall.result)
   const { stopScroll } = useStickToBottomContext()
-
-  useEffect(() => {
-    if (toolCall.status === 'running') setExpanded(true)
-  }, [toolCall.status])
 
   return (
     <div className={nested ? '' : 'rounded-lg border overflow-hidden'} style={nested ? undefined : { background: 'var(--muted)', borderColor: 'var(--border)' }}>
