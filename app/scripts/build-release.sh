@@ -57,6 +57,9 @@ rm -rf "$OUTPUT/_electron_tmp"
 RESOURCES="$BUNDLE/Contents/Resources"
 rm -f "$RESOURCES/default_app.asar"
 
+echo "  Replacing app icon..."
+cp "$APP_DIR/build/icon.icns" "$RESOURCES/electron.icns"
+
 echo "  Packing asar..."
 npx -y @electron/asar pack "$APP_CONTENT" "$RESOURCES/app.asar" \
   --unpack "{node_modules/@shipany/open-agent-sdk/**}"
