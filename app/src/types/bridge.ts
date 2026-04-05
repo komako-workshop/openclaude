@@ -1,3 +1,5 @@
+import type { PersistedChatState } from '../stores/chatStore'
+
 export type Settings = {
   apiKey: string
   baseURL: string
@@ -24,9 +26,13 @@ export type AgentEvent = {
 export interface OpenClaudeBridge {
   invoke(channel: 'settings:load'): Promise<Settings>
   invoke(channel: 'settings:save', settings: Settings): Promise<boolean>
+  invoke(channel: 'chat:load'): Promise<PersistedChatState | null>
+  invoke(channel: 'chat:save', state: PersistedChatState): Promise<boolean>
+  invoke(channel: 'chat:deleteConversationSession', conversationId: string): Promise<boolean>
   invoke(channel: 'dialog:selectDirectory'): Promise<string | null>
-  invoke(channel: 'agent:query', prompt: string): Promise<void>
+  invoke(channel: 'agent:query', prompt: string, conversationId?: string): Promise<void>
   invoke(channel: 'agent:abort'): Promise<void>
+  invoke(channel: 'agent:reset'): Promise<boolean>
   invoke(channel: 'shell:openExternal', url: string): Promise<void>
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

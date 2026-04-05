@@ -5,20 +5,41 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        surface: {
-          DEFAULT: '#0f0f14',
-          light: '#15151c',
-          lighter: '#1c1c26',
+        background: 'var(--bg)',
+        foreground: 'var(--fg)',
+        primary: {
+          DEFAULT: 'var(--primary)',
+          foreground: 'var(--primary-fg)',
         },
-        accent: {
-          DEFAULT: '#d97706',
-          light: '#f59e0b',
-          dim: 'rgba(217, 119, 6, 0.15)',
+        muted: {
+          DEFAULT: 'var(--muted)',
+          foreground: 'var(--muted-fg)',
+        },
+        card: {
+          DEFAULT: 'var(--card)',
+          foreground: 'var(--card-fg)',
         },
         border: {
-          DEFAULT: 'rgba(255, 255, 255, 0.06)',
-          light: 'rgba(255, 255, 255, 0.10)',
+          DEFAULT: 'var(--border)',
         },
+        input: 'var(--input)',
+        sidebar: {
+          DEFAULT: 'var(--sidebar)',
+          foreground: 'var(--sidebar-fg)',
+          accent: 'var(--sidebar-accent)',
+          border: 'var(--sidebar-border)',
+        },
+        'user-bubble': {
+          DEFAULT: 'var(--user-bubble)',
+          foreground: 'var(--user-bubble-fg)',
+        },
+        destructive: 'var(--destructive)',
+        success: 'var(--success)',
+        warning: 'var(--warning)',
+      },
+      borderRadius: {
+        xl: '0.75rem',
+        '2xl': '1rem',
       },
     },
   },

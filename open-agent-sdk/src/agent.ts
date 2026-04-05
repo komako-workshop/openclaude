@@ -52,6 +52,8 @@ export type AgentOptions = {
   systemPrompt?: string
   /** Append to default system prompt */
   appendSystemPrompt?: string
+  /** Initial transcript messages for session resume */
+  initialMessages?: Message[]
   /** Available tools. Defaults to all built-in tools. */
   tools?: Tools
   /** Maximum number of agentic turns per query */
@@ -190,7 +192,7 @@ export class Agent {
     this.options = options
     this.appState = getDefaultAppState()
     this.readFileCache = createFileStateCacheWithSizeLimit(5000)
-    this.mutableMessages = []
+    this.mutableMessages = options.initialMessages ? [...options.initialMessages] : []
     this.mcpClients = []
 
     // Resolve API key and model from options.env or direct options

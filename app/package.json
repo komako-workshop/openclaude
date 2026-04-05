@@ -5,6 +5,7 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "patch:sdk": "node scripts/patch-open-agent-sdk.mjs",
+    "smoke:resume": "npm run patch:sdk && node scripts/resume-smoke-test.mjs",
     "dev": "npm run patch:sdk && vite",
     "build": "npm run patch:sdk && tsc && vite build",
     "preview": "vite preview",
@@ -14,10 +15,13 @@
   },
   "dependencies": {
     "@shipany/open-agent-sdk": "^0.1.7",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^0.511.0",
     "marked": "^17.0.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
     "zustand": "^5.0.5"
   },
   "devDependencies": {

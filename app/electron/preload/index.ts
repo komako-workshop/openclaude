@@ -3,9 +3,13 @@ import { contextBridge, ipcRenderer } from 'electron'
 const INVOKE_CHANNELS = [
   'settings:load',
   'settings:save',
+  'chat:load',
+  'chat:save',
+  'chat:deleteConversationSession',
   'dialog:selectDirectory',
   'agent:query',
   'agent:abort',
+  'agent:reset',
   'shell:openExternal',
 ] as const
 

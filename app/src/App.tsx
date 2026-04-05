@@ -1,97 +1,177 @@
-import { useEffect, useMemo, useRef, type CSSProperties } from 'react'
-import { marked } from 'marked'
-import { Loader2, Settings, Trash2 } from 'lucide-react'
-import { ChatInput } from './components/ChatInput'
-import { MessageBubble } from './components/MessageBubble'
-import { SettingsPanel } from './components/SettingsPanel'
-import { useChatStore } from './stores/chatStore'
+import { useEffect, useRef, useState } from 'react'
+import { Loader2, Settings } from 'lucide-react'
+import { LEGACY_CHAT_STORAGE_KEY, useChatStore } from './stores/chatStore'
 import { useSettingsStore } from './stores/settingsStore'
+import { Sidebar } from './components/Sidebar'
+import MessageBubble from './components/MessageBubble'
+import { ChatInput } from './components/ChatInput'
+import { SettingsPanel } from './components/SettingsPanel'
 import type { AgentEvent } from './types/bridge'
+import type { PersistedChatState } from './stores/chatStore'
 
-function StreamingMarkdown({ text }: { text: string }) {
-  const html = useMemo(() => marked.parse(text) as string, [text])
-  return <div dangerouslySetInnerHTML={{ __html: html }} />
+function loadLegacyChatState(): PersistedChatState | null {
+  try {
+    const raw = window.localStorage.getItem(LEGACY_CHAT_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { state?: PersistedChatState }
+    if (!parsed.state?.conversations?.length) return null
+    return {
+      conversations: parsed.state.conversations,
+      activeId: parsed.state.activeId ?? parsed.state.conversations[0].id,
+    }
+  } catch { return null }
 }
 
 export default function App() {
   const {
-    messages,
-    isStreaming,
-    currentText,
-    currentTools,
-    currentThinking,
-    addUserMessage,
-    startStreaming,
-    appendText,
-    addToolCall,
-    setThinking,
-    finishStreaming,
-    addError,
-    clearMessages,
+    active, conversations, activeId, hydratePersistedState, isStreaming, streamingConversationId,
+    addMessage, appendToLastAssistant, appendThinking,
+    addToolCall, startStreaming, finishStreaming,
   } = useChatStore()
 
   const { loaded, showPanel, load: loadSettings, togglePanel, settings } = useSettingsStore()
   const scrollRef = useRef<HTMLDivElement>(null)
-  const listenersRef = useRef<Array<() => void>>([])
+  const [chatLoaded, setChatLoaded] = useState(false)
+
+  useEffect(() => { loadSettings() }, [loadSettings])
 
   useEffect(() => {
-    loadSettings()
-  }, [loadSettings])
+    let cancelled = false
+    async function loadChat() {
+      try {
+        const persisted = await window.openclaude.invoke('chat:load') as PersistedChatState | null
+        if (cancelled) return
+        if (persisted?.conversations?.length) { hydratePersistedState(persisted); setChatLoaded(true); return }
+        const legacy = loadLegacyChatState()
+        if (legacy) { hydratePersistedState(legacy); window.localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY) }
+      } catch {
+        const legacy = loadLegacyChatState()
+        if (!cancelled && legacy) { hydratePersistedState(legacy); window.localStorage.removeItem(LEGACY_CHAT_STORAGE_KEY) }
+      }
+      if (!cancelled) setChatLoaded(true)
+    }
+    loadChat()
+    return () => { cancelled = true }
+  }, [hydratePersistedState])
 
   useEffect(() => {
-    listenersRef.current.forEach((off) => off())
+    if (!chatLoaded) return
+    const timeout = window.setTimeout(() => {
+      window.openclaude.invoke('chat:save', { conversations, activeId } as PersistedChatState).catch(() => undefined)
+    }, 150)
+    return () => window.clearTimeout(timeout)
+  }, [activeId, chatLoaded, conversations])
 
+  const hadStreamDeltas = useRef(false)
+  const streamTargetIdRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    streamTargetIdRef.current = streamingConversationId
+  }, [streamingConversationId])
+
+  useEffect(() => {
     const offEvent = window.openclaude.on('agent:event', (raw: unknown) => {
-      const event = raw as AgentEvent
-      if (event.type !== 'assistant' || !event.message?.content) return
-
-      for (const block of event.message.content) {
-        if (block.type === 'text') {
-          appendText(block.text)
-        } else if (block.type === 'tool_use') {
-          addToolCall({ id: block.id, name: block.name, input: block.input })
-        } else if (block.type === 'thinking') {
-          setThinking(block.thinking)
+      const event = raw as Record<string, unknown>
+      const targetConversationId = streamTargetIdRef.current
+      if (event.type === 'stream_event') {
+        const se = (event as any).event
+        if (!se) return
+        if (se.type === 'content_block_delta' && se.delta) {
+          if (se.delta.type === 'text_delta' && se.delta.text) {
+            hadStreamDeltas.current = true
+            appendToLastAssistant(se.delta.text, targetConversationId ?? undefined)
+          }
+          else if (se.delta.type === 'thinking_delta' && se.delta.thinking) {
+            hadStreamDeltas.current = true
+            appendThinking(se.delta.thinking, targetConversationId ?? undefined)
+          }
+        } else if (se.type === 'content_block_start' && se.content_block?.type === 'tool_use') {
+          hadStreamDeltas.current = true
+          addToolCall({
+            id: se.content_block.id,
+            toolName: se.content_block.name,
+            status: 'running',
+            args: se.content_block.input,
+            startedAt: Date.now(),
+          }, targetConversationId ?? undefined)
+        }
+        return
+      }
+      if (event.type === 'assistant') {
+        const msg = (event as AgentEvent).message
+        if (!msg?.content) return
+        for (const block of msg.content) {
+          if (block.type === 'text' && !hadStreamDeltas.current) {
+            appendToLastAssistant(block.text, targetConversationId ?? undefined)
+          }
+          else if (block.type === 'tool_use' && !hadStreamDeltas.current)
+            addToolCall({
+              id: block.id,
+              toolName: block.name,
+              status: 'running',
+              args: block.input,
+              startedAt: Date.now(),
+            }, targetConversationId ?? undefined)
         }
       }
     })
+    const offDone = window.openclaude.on('agent:done', () => {
+      const targetConversationId = streamTargetIdRef.current
+      finishStreaming(targetConversationId ?? undefined)
+      streamTargetIdRef.current = null
+    })
+    const offError = window.openclaude.on('agent:error', (err: unknown) => {
+      const targetConversationId = streamTargetIdRef.current
+      addMessage({ role: 'assistant', content: String(err), isError: true }, targetConversationId ?? undefined)
+      finishStreaming(targetConversationId ?? undefined)
+      streamTargetIdRef.current = null
+    })
+    return () => { offEvent(); offDone(); offError() }
+  }, [addMessage, appendToLastAssistant, appendThinking, addToolCall, finishStreaming])
 
-    const offDone = window.openclaude.on('agent:done', () => finishStreaming())
-    const offError = window.openclaude.on('agent:error', (err: unknown) => addError(String(err)))
-
-    listenersRef.current = [offEvent, offDone, offError]
-    return () => listenersRef.current.forEach((off) => off())
-  }, [addError, addToolCall, appendText, finishStreaming, setThinking])
+  const conv = active()
+  const messages = conv?.messages ?? []
+  const stickToBottom = useRef(true)
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, currentText, currentTools, currentThinking])
+    const el = scrollRef.current
+    if (!el) return
+    const onScroll = () => { stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80 }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    if (stickToBottom.current) scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [messages])
 
   const handleSend = (text: string) => {
-    addUserMessage(text)
-    startStreaming()
-    window.openclaude.invoke('agent:query', text).catch((error) => {
-      addError(String(error))
+    const targetConversationId = activeId ?? conv?.id
+    if (!targetConversationId) return
+
+    hadStreamDeltas.current = false
+    streamTargetIdRef.current = targetConversationId
+    addMessage({ role: 'user', content: text }, targetConversationId)
+    addMessage({ role: 'assistant', content: '', isStreaming: true }, targetConversationId)
+    startStreaming(targetConversationId)
+    window.openclaude.invoke('agent:query', text, targetConversationId).catch((error) => {
+      addMessage({ role: 'assistant', content: String(error), isError: true }, targetConversationId)
+      finishStreaming(targetConversationId)
+      streamTargetIdRef.current = null
     })
   }
 
   const handleAbort = () => {
+    const targetConversationId = streamTargetIdRef.current
     window.openclaude.invoke('agent:abort').catch(() => undefined)
-    finishStreaming()
+    finishStreaming(targetConversationId ?? undefined)
+    streamTargetIdRef.current = null
   }
 
-  if (!loaded) {
+  if (!loaded || !chatLoaded) {
     return (
-      <div
-        style={{
-          height: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: '#0f0f14',
-        }}
-      >
-        <Loader2 className="animate-spin text-accent" size={28} />
+      <div className="h-screen flex items-center justify-center bg-background">
+        <Loader2 className="animate-spin text-primary" size={24} />
       </div>
     )
   }
@@ -99,109 +179,42 @@ export default function App() {
   const needsSetup = !settings.apiKey
 
   return (
-    <div
-      style={{
-        height: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        background: '#0f0f14',
-        color: '#d4d4d8',
-      }}
-    >
-      <div
-        style={{
-          height: 48,
-          flexShrink: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '0 16px',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          WebkitAppRegion: 'drag',
-        } as CSSProperties}
-      >
-        <div style={{ paddingLeft: 80, fontSize: 14, fontWeight: 500, color: '#a1a1aa' }}>
-          OpenClaude
-        </div>
-        <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
-          <button
-            onClick={clearMessages}
-            className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-surface-lighter transition-colors"
-            title="Clear"
-          >
-            <Trash2 size={15} />
-          </button>
-          <button
-            onClick={togglePanel}
-            className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-surface-lighter transition-colors"
-            title="Settings"
-          >
-            <Settings size={15} />
+    <div className="h-screen flex bg-background text-foreground overflow-hidden">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Title bar */}
+        <div className="h-11 shrink-0 flex items-center justify-between px-4 border-b" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+          <div className="text-[13px] font-medium text-muted-foreground truncate max-w-[50%]">{conv?.title ?? 'OpenClaude'}</div>
+          <button onClick={togglePanel} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg hover:bg-muted transition-colors" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties} title="Settings">
+            <Settings size={14} />
           </button>
         </div>
-      </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-6">
-        <div className="max-w-3xl mx-auto">
-          {messages.length === 0 && !isStreaming && (
-            <div className="flex flex-col items-center justify-center h-full min-h-[50vh] text-center">
-              <div className="text-3xl font-bold bg-gradient-to-r from-accent to-amber-400 bg-clip-text text-transparent mb-3">
-                OpenClaude
+        {/* Messages */}
+        <div ref={scrollRef} className="flex-1 overflow-y-auto">
+          <div className="max-w-[720px] mx-auto px-5 py-4">
+            {messages.length === 0 && !isStreaming && (
+              <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-6">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
+                  <span className="text-lg font-bold text-primary">O</span>
+                </div>
+                <h1 className="text-lg font-semibold text-foreground mb-1">OpenClaude</h1>
+                <p className="text-[13px] text-muted-foreground max-w-xs">Ask anything. Read files, write code, run commands.</p>
+                {needsSetup && (
+                  <button onClick={togglePanel} className="mt-5 px-4 py-2 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 transition-opacity">
+                    Set up API key to get started
+                  </button>
+                )}
               </div>
-              <p className="text-sm text-zinc-500 max-w-md">
-                Claude Code agent engine in a desktop app. Ask me to read files, write code,
-                run commands, search the web, or inspect the current project.
-              </p>
-              {needsSetup && (
-                <button
-                  onClick={togglePanel}
-                  className="mt-4 px-4 py-2 text-sm bg-accent/20 hover:bg-accent/30 border border-accent/30 text-accent-light rounded-xl transition-colors"
-                >
-                  Set up API key to get started
-                </button>
-              )}
+            )}
+            <div className="space-y-0">
+              {messages.map((msg) => <MessageBubble key={msg.id} message={msg} isStreaming={isStreaming} />)}
             </div>
-          )}
-
-          {messages.map((msg) => (
-            <MessageBubble key={msg.id} msg={msg} />
-          ))}
-
-          {isStreaming && (
-            <div className="mb-4 max-w-[90%]">
-              {currentThinking && (
-                <div className="text-xs text-zinc-500 bg-surface-light/50 rounded-lg p-3 mb-2 border border-border italic whitespace-pre-wrap">
-                  {currentThinking}
-                </div>
-              )}
-
-              {currentTools.map((tool) => (
-                <div
-                  key={tool.id}
-                  className="flex items-center gap-2 text-xs text-zinc-500 bg-surface-light/50 border border-border rounded-lg px-3 py-2 my-1.5"
-                >
-                  <Loader2 size={13} className="animate-spin text-accent-light" />
-                  <span className="font-medium text-zinc-400">{tool.name}</span>
-                  <span className="truncate text-zinc-600">{JSON.stringify(tool.input).slice(0, 80)}</span>
-                </div>
-              ))}
-
-              {currentText ? (
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <StreamingMarkdown text={currentText} />
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-xs text-zinc-500">
-                  <Loader2 size={14} className="animate-spin" />
-                  <span>Thinking...</span>
-                </div>
-              )}
-            </div>
-          )}
+          </div>
         </div>
-      </div>
 
-      <ChatInput onSend={handleSend} onAbort={handleAbort} isStreaming={isStreaming} />
+        <ChatInput onSend={handleSend} onAbort={handleAbort} isStreaming={isStreaming} />
+      </div>
       {showPanel && <SettingsPanel />}
     </div>
   )
