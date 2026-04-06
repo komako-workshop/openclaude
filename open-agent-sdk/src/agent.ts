@@ -231,7 +231,7 @@ export class Agent {
             this.mcpClients.push(connection)
 
             // Fetch tools from connected MCP server and add to tool pool
-            if (connection.status === 'connected' && connection.client) {
+            if (connection.type === 'connected' && connection.client) {
               const { fetchToolsForClient } = await import('./services/mcp/client.js')
               const mcpTools = await fetchToolsForClient(connection)
               if (mcpTools?.length) {

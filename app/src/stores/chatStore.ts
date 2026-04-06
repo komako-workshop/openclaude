@@ -111,6 +111,7 @@ interface ChatState extends PersistedChatState {
   appendThinking: (thinkingDelta: string, conversationId?: string) => void
   addToolCall: (tc: ToolCallInfo, conversationId?: string) => void
   updateToolCall: (toolCallId: string, updates: Partial<ToolCallInfo>, conversationId?: string) => void
+  stopLastAssistantStreaming: (conversationId?: string) => void
   finishLastAssistant: (conversationId?: string) => void
   startStreaming: (conversationId?: string) => void
   finishStreaming: (conversationId?: string) => void
@@ -134,6 +135,14 @@ export const useChatStore = create<ChatState>((set, get) => {
   function lastAssistantIndex(msgs: ChatMessage[]): number {
     for (let i = msgs.length - 1; i >= 0; i--) {
       if (msgs[i].role === 'assistant') return i
+    }
+    return -1
+  }
+
+  function assistantIndexByToolCallId(msgs: ChatMessage[], toolCallId: string): number {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role !== 'assistant') continue
+      if (msgs[i].toolCalls?.some((toolCall) => toolCall.id === toolCallId)) return i
     }
     return -1
   }
@@ -243,7 +252,7 @@ export const useChatStore = create<ChatState>((set, get) => {
 
     updateToolCall: (toolCallId, updates, conversationId) => {
       withConversation((c) => {
-        const idx = lastAssistantIndex(c.messages)
+        const idx = assistantIndexByToolCallId(c.messages, toolCallId)
         if (idx === -1) return c
         const msgs = [...c.messages]
         msgs[idx] = {
@@ -252,6 +261,18 @@ export const useChatStore = create<ChatState>((set, get) => {
             tc.id === toolCallId ? { ...tc, ...updates } : tc,
           ),
         }
+        return { ...c, messages: msgs }
+      }, conversationId)
+    },
+
+    stopLastAssistantStreaming: (conversationId) => {
+      withConversation((c) => {
+        const idx = lastAssistantIndex(c.messages)
+        if (idx === -1) return c
+        const msg = c.messages[idx]
+        if (!msg.isStreaming) return c
+        const msgs = [...c.messages]
+        msgs[idx] = { ...msg, isStreaming: false }
         return { ...c, messages: msgs }
       }, conversationId)
     },

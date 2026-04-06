@@ -33,7 +33,7 @@ export default function App() {
   const {
     active, conversations, activeId, hydratePersistedState, isStreaming, streamingConversationId,
     addMessage, appendToLastAssistant, appendThinking,
-    addToolCall, updateToolCall, startStreaming, finishStreaming,
+    addToolCall, updateToolCall, stopLastAssistantStreaming, startStreaming, finishStreaming,
   } = useChatStore()
 
   const { loaded, showPanel, load: loadSettings, togglePanel, settings } = useSettingsStore()
@@ -72,9 +72,41 @@ export default function App() {
     return () => window.clearTimeout(timeout)
   }, [activeId, chatLoaded, conversations])
 
-  const hadStreamDeltas = useRef(false)
+  const streamedTextRef = useRef(false)
+  const streamedThinkingRef = useRef(false)
+  const streamedToolCallIdsRef = useRef(new Set<string>())
   const streamTargetIdRef = useRef<string | null>(null)
   const initMetaRef = useRef<Record<string, unknown> | null>(null)
+
+  const getConversationMessages = useCallback((conversationId?: string) => {
+    const state = useChatStore.getState()
+    const targetId = conversationId ?? state.activeId
+    return state.conversations.find((conversation) => conversation.id === targetId)?.messages ?? []
+  }, [])
+
+  const ensureAssistantPlaceholder = useCallback((conversationId?: string) => {
+    const messages = getConversationMessages(conversationId)
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage?.role === 'assistant' && lastMessage.isStreaming) return
+    addMessage({ role: 'assistant', content: '', isStreaming: true }, conversationId)
+  }, [addMessage, getConversationMessages])
+
+  const beginAssistantTurn = useCallback((conversationId?: string) => {
+    const messages = getConversationMessages(conversationId)
+    const lastMessage = messages[messages.length - 1]
+
+    if (lastMessage?.role === 'assistant' && lastMessage.isStreaming) {
+      const hasContent = Boolean(
+        lastMessage.content
+        || lastMessage.thinkingContent?.trim()
+        || lastMessage.toolCalls?.length,
+      )
+      if (!hasContent) return
+      stopLastAssistantStreaming(conversationId)
+    }
+
+    addMessage({ role: 'assistant', content: '', isStreaming: true }, conversationId)
+  }, [addMessage, getConversationMessages, stopLastAssistantStreaming])
 
   useEffect(() => {
     streamTargetIdRef.current = streamingConversationId
@@ -87,17 +119,26 @@ export default function App() {
       if (event.type === 'stream_event') {
         const se = (event as any).event
         if (!se) return
+        if (se.type === 'message_start') {
+          streamedTextRef.current = false
+          streamedThinkingRef.current = false
+          streamedToolCallIdsRef.current = new Set()
+          beginAssistantTurn(targetConversationId ?? undefined)
+          return
+        }
         if (se.type === 'content_block_delta' && se.delta) {
+          ensureAssistantPlaceholder(targetConversationId ?? undefined)
           if (se.delta.type === 'text_delta' && se.delta.text) {
-            hadStreamDeltas.current = true
+            streamedTextRef.current = true
             appendToLastAssistant(se.delta.text, targetConversationId ?? undefined)
           }
           else if (se.delta.type === 'thinking_delta' && se.delta.thinking) {
-            hadStreamDeltas.current = true
+            streamedThinkingRef.current = true
             appendThinking(se.delta.thinking, targetConversationId ?? undefined)
           }
         } else if (se.type === 'content_block_start' && se.content_block?.type === 'tool_use') {
-          hadStreamDeltas.current = true
+          ensureAssistantPlaceholder(targetConversationId ?? undefined)
+          streamedToolCallIdsRef.current.add(se.content_block.id)
           addToolCall({
             id: se.content_block.id,
             toolName: se.content_block.name,
@@ -111,15 +152,16 @@ export default function App() {
       if (event.type === 'assistant') {
         const msg = (event as AgentEvent).message
         if (!msg?.content) return
+        ensureAssistantPlaceholder(targetConversationId ?? undefined)
         for (const block of msg.content) {
-          if (block.type === 'text' && !hadStreamDeltas.current) {
+          if (block.type === 'text' && !streamedTextRef.current) {
             appendToLastAssistant(block.text, targetConversationId ?? undefined)
           }
-          else if (block.type === 'thinking' && !hadStreamDeltas.current) {
+          else if (block.type === 'thinking' && !streamedThinkingRef.current) {
             appendThinking(block.thinking, targetConversationId ?? undefined)
           }
           else if (block.type === 'tool_use') {
-            if (hadStreamDeltas.current) {
+            if (streamedToolCallIdsRef.current.has(block.id)) {
               updateToolCall(block.id, {
                 args: block.input,
               }, targetConversationId ?? undefined)
@@ -148,13 +190,6 @@ export default function App() {
           }, targetConversationId ?? undefined)
         }
       }
-      if (event.type === 'result') {
-        const resultEvent = event as Record<string, unknown>
-        const resultText = typeof resultEvent.result === 'string' ? resultEvent.result : ''
-        if (resultText) {
-          appendToLastAssistant(resultText, targetConversationId ?? undefined)
-        }
-      }
       if ((event as any).type === 'system' && (event as any).subtype === 'init') {
         initMetaRef.current = event as Record<string, unknown>
       }
@@ -171,7 +206,16 @@ export default function App() {
       streamTargetIdRef.current = null
     })
     return () => { offEvent(); offDone(); offError() }
-  }, [addMessage, appendToLastAssistant, appendThinking, addToolCall, updateToolCall, finishStreaming])
+  }, [
+    addMessage,
+    appendToLastAssistant,
+    appendThinking,
+    addToolCall,
+    updateToolCall,
+    beginAssistantTurn,
+    ensureAssistantPlaceholder,
+    finishStreaming,
+  ])
 
   const conv = active()
   const messages = conv?.messages ?? []
@@ -306,10 +350,11 @@ export default function App() {
       return
     }
 
-    hadStreamDeltas.current = false
+    streamedTextRef.current = false
+    streamedThinkingRef.current = false
+    streamedToolCallIdsRef.current = new Set()
     streamTargetIdRef.current = targetConversationId
     addMessage({ role: 'user', content: text }, targetConversationId)
-    addMessage({ role: 'assistant', content: '', isStreaming: true }, targetConversationId)
     startStreaming(targetConversationId)
     window.openclaude.invoke('agent:query', text, targetConversationId).catch((error) => {
       addMessage({ role: 'assistant', content: String(error), isError: true }, targetConversationId)

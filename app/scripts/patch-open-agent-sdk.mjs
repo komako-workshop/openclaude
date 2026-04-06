@@ -70,6 +70,67 @@ You may provide well-known URLs when the user asks (official websites, documenta
     ],
   },
   {
+    file: join(root, 'agent.js'),
+    replacements: [
+      {
+        from: `                        const connection = await connectToServer(name, scopedConfig);
+                        this.mcpClients.push(connection);
+                        // Fetch tools from connected MCP server and add to tool pool
+                        if (connection.status === 'connected' && connection.client) {
+                            const { fetchToolsForClient } = await import('./services/mcp/client.js');
+                            const mcpTools = await fetchToolsForClient(connection);
+                            if (mcpTools?.length) {
+                                this.tools = [...this.tools, ...mcpTools];
+                            }
+                        }`,
+        to: `                        const connection = await connectToServer(name, scopedConfig);
+                        this.mcpClients.push(connection);
+                        console.log(\`[MCP] Server "\${name}" status: \${connection.type}\`);
+                        // Fetch tools from connected MCP server and add to tool pool
+                        if (connection.type === 'connected' && connection.client) {
+                            const { fetchToolsForClient } = await import('./services/mcp/client.js');
+                            const mcpTools = await fetchToolsForClient(connection);
+                            console.log(\`[MCP] Server "\${name}" loaded \${mcpTools?.length ?? 0} tools\`);
+                            if (mcpTools?.length) {
+                                this.tools = [...this.tools, ...mcpTools];
+                            }
+                        } else {
+                            console.log(\`[MCP] Server "\${name}" not connected, skipping tool fetch (status: \${connection.type}, hasClient: \${!!connection.client})\`);
+                        }`,
+      },
+      {
+        from: `                        const connection = await connectToServer(name, scopedConfig);
+                        this.mcpClients.push(connection);
+                        console.log(\`[MCP] Server "\${name}" status: \${connection.status}\`);
+                        // Fetch tools from connected MCP server and add to tool pool
+                        if (connection.status === 'connected' && connection.client) {
+                            const { fetchToolsForClient } = await import('./services/mcp/client.js');
+                            const mcpTools = await fetchToolsForClient(connection);
+                            console.log(\`[MCP] Server "\${name}" loaded \${mcpTools?.length ?? 0} tools\`);
+                            if (mcpTools?.length) {
+                                this.tools = [...this.tools, ...mcpTools];
+                            }
+                        } else {
+                            console.log(\`[MCP] Server "\${name}" not connected, skipping tool fetch (status: \${connection.status}, hasClient: \${!!connection.client})\`);
+                        }`,
+        to: `                        const connection = await connectToServer(name, scopedConfig);
+                        this.mcpClients.push(connection);
+                        console.log(\`[MCP] Server "\${name}" status: \${connection.type}\`);
+                        // Fetch tools from connected MCP server and add to tool pool
+                        if (connection.type === 'connected' && connection.client) {
+                            const { fetchToolsForClient } = await import('./services/mcp/client.js');
+                            const mcpTools = await fetchToolsForClient(connection);
+                            console.log(\`[MCP] Server "\${name}" loaded \${mcpTools?.length ?? 0} tools\`);
+                            if (mcpTools?.length) {
+                                this.tools = [...this.tools, ...mcpTools];
+                            }
+                        } else {
+                            console.log(\`[MCP] Server "\${name}" not connected, skipping tool fetch (status: \${connection.type}, hasClient: \${!!connection.client})\`);
+                        }`,
+      },
+    ],
+  },
+  {
     file: join(root, 'utils', 'betas.js'),
     replacements: [
       {
