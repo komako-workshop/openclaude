@@ -30,6 +30,7 @@ export interface ChatMessage {
 export interface Conversation {
   id: string
   title: string
+  customTitle?: boolean
   messages: ChatMessage[]
   createdAt: number
   updatedAt: number
@@ -110,6 +111,7 @@ interface ChatState extends PersistedChatState {
   newConversation: () => void
   switchTo: (id: string) => void
   deleteConversation: (id: string) => void
+  renameConversation: (id: string, title: string) => void
   togglePin: (id: string) => void
 
   addMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'>, conversationId?: string) => void
@@ -133,7 +135,11 @@ export const useChatStore = create<ChatState>((set, get) => {
       conversations: conversations.map((c) => {
         if (c.id !== targetId) return c
         const updated = fn(c)
-        return { ...updated, updatedAt: Date.now(), title: autoTitle(updated.messages) }
+        return {
+          ...updated,
+          updatedAt: Date.now(),
+          title: updated.customTitle ? updated.title : autoTitle(updated.messages),
+        }
       }),
     })
   }
@@ -205,6 +211,16 @@ export const useChatStore = create<ChatState>((set, get) => {
         activeId: activeId === id ? next[0].id : activeId,
         isStreaming: nextStreamingConversationIds.length > 0,
         streamingConversationIds: nextStreamingConversationIds,
+      })
+    },
+
+    renameConversation: (id, title) => {
+      const trimmed = title.trim()
+      if (!trimmed) return
+      set({
+        conversations: get().conversations.map((c) =>
+          c.id === id ? { ...c, title: trimmed, customTitle: true, updatedAt: Date.now() } : c,
+        ),
       })
     },
 

@@ -42,17 +42,21 @@ export default function MessageBubble({ message }: Props) {
 function UserMessage({ message }: { message: ChatMessage }) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
   const { stopScroll } = useStickToBottomContext()
   const hasImages = Boolean(message.images?.length)
 
   useEffect(() => {
-    if (ref.current) setOverflows(ref.current.scrollHeight > COLLAPSE_HEIGHT)
+    const el = contentRef.current
+    if (!el) return
+    requestAnimationFrame(() => {
+      setOverflows(el.scrollHeight > COLLAPSE_HEIGHT)
+    })
   }, [message.content])
 
   return (
     <div className="flex justify-end mt-6 mb-2">
-      <div className="relative max-w-[85%]">
+      <div className="max-w-[85%]">
         {hasImages && (
           <div className="flex flex-wrap gap-1.5 justify-end mb-1.5">
             {message.images!.map((img, i) => (
@@ -60,22 +64,21 @@ function UserMessage({ message }: { message: ChatMessage }) {
                 key={i}
                 src={`data:${img.mediaType};base64,${img.base64}`}
                 alt=""
-                className="rounded-xl object-cover cursor-pointer max-h-48 max-w-full border"
-                style={{ borderColor: 'color-mix(in srgb, var(--user-bubble) 60%, transparent)' }}
+                className="rounded-2xl rounded-tr-sm object-cover cursor-pointer max-h-64 max-w-full shadow-sm"
                 onDoubleClick={() => window.openclaude.invoke('image:preview', img.base64, img.mediaType)}
               />
             ))}
           </div>
         )}
         {message.content && (
-          <>
+          <div className="relative">
             <div
-              ref={ref}
-              className="rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed overflow-hidden transition-[max-height] duration-300"
+              ref={contentRef}
+              className="rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap break-words leading-relaxed overflow-hidden transition-[max-height] duration-300 ease-in-out"
               style={{
                 background: 'var(--user-bubble)',
                 color: 'var(--user-bubble-fg)',
-                maxHeight: overflows && !expanded ? COLLAPSE_HEIGHT : undefined,
+                maxHeight: overflows && !expanded ? `${COLLAPSE_HEIGHT}px` : undefined,
               }}
             >
               {message.content}
@@ -92,10 +95,10 @@ function UserMessage({ message }: { message: ChatMessage }) {
               }}
                 className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
                 {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                <span>{expanded ? 'Collapse' : 'Expand'}</span>
+                <span>{expanded ? '收起' : '展开'}</span>
               </button>
             )}
-          </>
+          </div>
         )}
       </div>
     </div>
