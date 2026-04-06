@@ -18,7 +18,7 @@ function getDateGroup(ts: number): string {
 type GroupedConversations = { label: string; items: Conversation[] }[]
 
 export function Sidebar() {
-  const { conversations, activeId, newConversation, switchTo, deleteConversation, togglePin, streamingConversationId } = useChatStore()
+  const { conversations, activeId, newConversation, switchTo, deleteConversation, togglePin, streamingConversationIds } = useChatStore()
   const { togglePanel, theme, setTheme } = useSettingsStore()
 
   const pinned = useMemo(() => conversations.filter((c) => c.pinned), [conversations])
@@ -45,7 +45,7 @@ export function Sidebar() {
 
   function ConversationRow({ conv }: { conv: Conversation }) {
     const isActive = conv.id === activeId
-    const isStreamingConv = streamingConversationId === conv.id
+    const isStreamingConv = streamingConversationIds.includes(conv.id)
     const isPinned = conv.pinned
 
     return (

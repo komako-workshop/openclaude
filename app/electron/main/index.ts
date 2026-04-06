@@ -4,12 +4,22 @@ import * as fs from 'fs'
 import * as os from 'os'
 
 let mainWindow: BrowserWindow | null = null
-let activeAbortController: AbortController | null = null
 
-// Persistent agent: reused across queries within the same conversation
-let currentAgent: any = null
-let currentConversationId: string | null = null
-let currentSettingsKey: string = ''
+const APP_DATA_OVERRIDE = process.env.OPENCLAUDE_APPDATA_DIR?.trim()
+if (APP_DATA_OVERRIDE) {
+  fs.mkdirSync(APP_DATA_OVERRIDE, { recursive: true })
+  app.setPath('appData', APP_DATA_OVERRIDE)
+  app.setPath('userData', join(APP_DATA_OVERRIDE, 'openclaude'))
+}
+
+type AgentRuntime = {
+  agent: any
+  settingsKey: string
+  conversationId: string | null
+}
+
+const agentRuntimes = new Map<string, AgentRuntime>()
+const activeAbortControllers = new Map<string, AbortController>()
 const deletedConversationIds = new Set<string>()
 const AGENT_SESSION_VERSION = 1
 const AGENT_PROMPT_FINGERPRINT_VERSION = 1
@@ -242,11 +252,15 @@ function deleteAgentSession(conversationId: string): boolean {
   }
 }
 
-function getCurrentAgentMessages(): unknown[] {
-  if (!currentAgent || typeof currentAgent.getMessages !== 'function') return []
+function getAgentKey(conversationId?: string): string {
+  return conversationId ?? '__default__'
+}
+
+function getAgentMessages(agent: any): unknown[] {
+  if (!agent || typeof agent.getMessages !== 'function') return []
 
   try {
-    const messages = currentAgent.getMessages()
+    const messages = agent.getMessages()
     return Array.isArray(messages)
       ? messages.filter((message) =>
           typeof message === 'object'
@@ -294,30 +308,26 @@ async function getAgentModule() {
 }
 
 async function getOrCreateAgent(settings: Settings, conversationId?: string): Promise<any> {
-  const key = buildSettingsKey(settings)
-  const settingsChanged = currentSettingsKey !== key
-  const conversationChanged = conversationId !== currentConversationId
-  const creationReason = !currentAgent
-    ? 'first_agent'
-    : settingsChanged
-      ? 'settings_changed'
-      : conversationChanged
-        ? 'conversation_changed'
-        : 'unknown'
-
-  if (currentAgent && !settingsChanged && !conversationChanged) {
+  const settingsKey = buildSettingsKey(settings)
+  const agentKey = getAgentKey(conversationId)
+  const existing = agentRuntimes.get(agentKey)
+  if (existing && existing.settingsKey === settingsKey) {
     logAgentSession('reused', {
       conversationId: conversationId ?? null,
-      settingsChanged,
-      conversationChanged,
+      settingsChanged: false,
+      conversationChanged: false,
     })
-    return currentAgent
+    return existing.agent
   }
 
+  const creationReason = !existing ? 'first_agent' : 'settings_changed'
+  if (existing?.agent) {
+    try { existing.agent.clear() } catch { /* ignore */ }
+  }
   const restoredMessages = conversationId ? loadAgentMessages(conversationId, settings) : null
   const mcpServers = loadMcpServers()
   const { createAgent } = await getAgentModule()
-  currentAgent = createAgent({
+  const agent = createAgent({
     model: settings.model,
     apiKey: settings.apiKey,
     baseURL: settings.baseURL,
@@ -327,27 +337,43 @@ async function getOrCreateAgent(settings: Settings, conversationId?: string): Pr
     initialMessages: restoredMessages ?? undefined,
     ...(mcpServers && { mcpServers }),
   })
-  currentSettingsKey = key
-  currentConversationId = conversationId ?? null
+  agentRuntimes.set(agentKey, {
+    agent,
+    settingsKey,
+    conversationId: conversationId ?? null,
+  })
   logAgentSession('created', {
     conversationId: conversationId ?? null,
     reason: creationReason,
     restoredMessageCount: restoredMessages?.length ?? 0,
   })
-  return currentAgent
+  return agent
+}
+
+function disposeConversationRuntime(conversationId?: string) {
+  const agentKey = getAgentKey(conversationId)
+  const runtime = agentRuntimes.get(agentKey)
+  if (runtime?.agent) {
+    try { runtime.agent.clear() } catch { /* ignore */ }
+  }
+  activeAbortControllers.get(agentKey)?.abort()
+  activeAbortControllers.delete(agentKey)
+  agentRuntimes.delete(agentKey)
 }
 
 function resetAgent() {
   logAgentSession('reset', {
-    conversationId: currentConversationId,
-    hasAgent: Boolean(currentAgent),
+    conversationId: null,
+    hasAgent: agentRuntimes.size > 0,
   })
-  if (currentAgent) {
-    try { currentAgent.clear() } catch { /* ignore */ }
+  for (const runtime of agentRuntimes.values()) {
+    try { runtime.agent.clear() } catch { /* ignore */ }
   }
-  currentAgent = null
-  currentConversationId = null
-  currentSettingsKey = ''
+  for (const abortController of activeAbortControllers.values()) {
+    abortController.abort()
+  }
+  activeAbortControllers.clear()
+  agentRuntimes.clear()
 }
 
 type ImageAttachment = { base64: string; mediaType: string; name: string }
@@ -379,49 +405,61 @@ async function runAgentQuery(
   conversationId?: string,
   images?: ImageAttachment[],
 ) {
+  const agentKey = getAgentKey(conversationId)
   const agent = await getOrCreateAgent(settings, conversationId)
-
-  activeAbortController = new AbortController()
+  activeAbortControllers.get(agentKey)?.abort()
+  const abortController = new AbortController()
+  activeAbortControllers.set(agentKey, abortController)
 
   const queryPrompt = buildPromptWithImages(prompt, images ?? [])
 
   let eventCount = 0
   const t0 = Date.now()
 
-  for await (const event of agent.query(queryPrompt as any, { abortSignal: activeAbortController.signal })) {
-    if (activeAbortController?.signal.aborted) break
-    eventCount++
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
-    const evt = event as Record<string, unknown>
+  try {
+    for await (const event of agent.query(queryPrompt as any, { abortSignal: abortController.signal })) {
+      if (abortController.signal.aborted) break
+      eventCount++
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+      const evt = event as Record<string, unknown>
 
-    if (evt.type === 'stream_event') {
-      const se = (evt as any).event
-      const subtype = se?.type ?? '?'
-      const detail =
-        subtype === 'content_block_start' ? se?.content_block?.type :
-        subtype === 'content_block_delta' ? se?.delta?.type :
-        ''
-      console.log(`[agent] #${eventCount} +${elapsed}s stream_event/${subtype} ${detail}`)
-    } else {
-      console.log(`[agent] #${eventCount} +${elapsed}s ${evt.type}${evt.subtype ? '/' + evt.subtype : ''}`)
+      if (evt.type === 'stream_event') {
+        const se = (evt as any).event
+        const subtype = se?.type ?? '?'
+        const detail =
+          subtype === 'content_block_start' ? se?.content_block?.type :
+          subtype === 'content_block_delta' ? se?.delta?.type :
+          ''
+        console.log(`[agent] #${eventCount} +${elapsed}s stream_event/${subtype} ${detail}`)
+      } else {
+        console.log(`[agent] #${eventCount} +${elapsed}s ${evt.type}${evt.subtype ? '/' + evt.subtype : ''}`)
+      }
+
+      mainWindow?.webContents.send('agent:event', {
+        conversationId: conversationId ?? null,
+        event,
+      })
     }
 
-    mainWindow?.webContents.send('agent:event', event)
-  }
+    const wasAborted = abortController.signal.aborted === true
+    if (!wasAborted && conversationId) {
+      saveAgentMessages(conversationId, settings, getAgentMessages(agent))
+    } else if (wasAborted) {
+      logAgentSession('save-skipped', {
+        conversationId: conversationId ?? null,
+        reason: 'aborted',
+      })
+    }
 
-  const wasAborted = activeAbortController?.signal.aborted === true
-  if (!wasAborted && conversationId) {
-    saveAgentMessages(conversationId, settings, getCurrentAgentMessages())
-  } else if (wasAborted) {
-    logAgentSession('save-skipped', {
+    console.log(`[agent] done — ${eventCount} events in ${((Date.now() - t0) / 1000).toFixed(1)}s`)
+    mainWindow?.webContents.send('agent:done', {
       conversationId: conversationId ?? null,
-      reason: 'aborted',
     })
+  } finally {
+    if (activeAbortControllers.get(agentKey) === abortController) {
+      activeAbortControllers.delete(agentKey)
+    }
   }
-
-  console.log(`[agent] done — ${eventCount} events in ${((Date.now() - t0) / 1000).toFixed(1)}s`)
-  activeAbortController = null
-  mainWindow?.webContents.send('agent:done')
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +483,7 @@ function registerIPC() {
 
   ipcMain.handle('chat:deleteConversationSession', (_e, conversationId: string) => {
     if (typeof conversationId !== 'string' || !conversationId) return false
+    disposeConversationRuntime(conversationId)
     return deleteAgentSession(conversationId)
   })
 
@@ -458,19 +497,33 @@ function registerIPC() {
   ipcMain.handle('agent:query', async (_e, prompt: string, conversationId?: string, images?: ImageAttachment[]) => {
     const settings = loadSettings()
     if (!settings.apiKey) {
-      mainWindow?.webContents.send('agent:error', 'API key 未设置，请先在设置中配置。')
+      mainWindow?.webContents.send('agent:error', {
+        conversationId: conversationId ?? null,
+        error: 'API key 未设置，请先在设置中配置。',
+      })
       return
     }
     try {
       await runAgentQuery(prompt, settings, conversationId, images)
     } catch (err: any) {
-      mainWindow?.webContents.send('agent:error', err.message ?? String(err))
+      mainWindow?.webContents.send('agent:error', {
+        conversationId: conversationId ?? null,
+        error: err.message ?? String(err),
+      })
     }
   })
 
-  ipcMain.handle('agent:abort', () => {
-    activeAbortController?.abort()
-    activeAbortController = null
+  ipcMain.handle('agent:abort', (_e, conversationId?: string) => {
+    if (conversationId) {
+      const agentKey = getAgentKey(conversationId)
+      activeAbortControllers.get(agentKey)?.abort()
+      activeAbortControllers.delete(agentKey)
+      return
+    }
+    for (const abortController of activeAbortControllers.values()) {
+      abortController.abort()
+    }
+    activeAbortControllers.clear()
   })
 
   ipcMain.handle('agent:reset', () => {

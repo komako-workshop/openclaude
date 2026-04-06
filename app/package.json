@@ -6,6 +6,7 @@
   "main": "dist-electron/main/index.js",
   "scripts": {
     "patch:sdk": "node scripts/patch-open-agent-sdk.mjs",
+    "smoke:isolation": "npm run patch:sdk && node scripts/isolation-regression-smoke.mjs",
     "smoke:resume": "npm run patch:sdk && node scripts/resume-smoke-test.mjs",
     "smoke:scroll": "npm run patch:sdk && node scripts/scroll-regression-smoke.mjs",
     "dev": "npm run patch:sdk && vite",

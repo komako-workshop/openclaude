@@ -103,7 +103,7 @@ function normalizePersistedState(persisted?: PersistedChatState | null): Persist
 
 interface ChatState extends PersistedChatState {
   isStreaming: boolean
-  streamingConversationId: string | null
+  streamingConversationIds: string[]
 
   active: () => Conversation | undefined
   hydratePersistedState: (persisted?: PersistedChatState | null) => void
@@ -157,7 +157,7 @@ export const useChatStore = create<ChatState>((set, get) => {
     conversations: initial.conversations,
     activeId: initial.activeId,
     isStreaming: false,
-    streamingConversationId: null,
+    streamingConversationIds: [],
 
     active: () => {
       const { conversations, activeId } = get()
@@ -170,7 +170,7 @@ export const useChatStore = create<ChatState>((set, get) => {
         conversations: next.conversations,
         activeId: next.activeId,
         isStreaming: false,
-        streamingConversationId: null,
+        streamingConversationIds: [],
       })
     },
 
@@ -180,30 +180,31 @@ export const useChatStore = create<ChatState>((set, get) => {
         conversations: [conv, ...s.conversations],
         activeId: conv.id,
         isStreaming: s.isStreaming,
-        streamingConversationId: s.streamingConversationId,
+        streamingConversationIds: s.streamingConversationIds,
       }))
     },
 
     switchTo: (id) => set({ activeId: id }),
 
     deleteConversation: (id) => {
-      const { conversations, activeId, streamingConversationId } = get()
+      const { conversations, activeId, streamingConversationIds } = get()
       const next = conversations.filter((c) => c.id !== id)
+      const nextStreamingConversationIds = streamingConversationIds.filter((conversationId) => conversationId !== id)
       if (next.length === 0) {
         const fresh = makeConv()
         set({
           conversations: [fresh],
           activeId: fresh.id,
-          isStreaming: streamingConversationId === id ? false : get().isStreaming,
-          streamingConversationId: streamingConversationId === id ? null : streamingConversationId,
+          isStreaming: nextStreamingConversationIds.length > 0,
+          streamingConversationIds: nextStreamingConversationIds,
         })
         return
       }
       set({
         conversations: next,
         activeId: activeId === id ? next[0].id : activeId,
-        isStreaming: streamingConversationId === id ? false : get().isStreaming,
-        streamingConversationId: streamingConversationId === id ? null : streamingConversationId,
+        isStreaming: nextStreamingConversationIds.length > 0,
+        streamingConversationIds: nextStreamingConversationIds,
       })
     },
 
@@ -302,14 +303,29 @@ export const useChatStore = create<ChatState>((set, get) => {
       }, conversationId)
     },
 
-    startStreaming: (conversationId) => set({
-      isStreaming: true,
-      streamingConversationId: conversationId ?? get().activeId,
+    startStreaming: (conversationId) => set((state) => {
+      const targetId = conversationId ?? state.activeId
+      if (!targetId) return state
+      const streamingConversationIds = state.streamingConversationIds.includes(targetId)
+        ? state.streamingConversationIds
+        : [...state.streamingConversationIds, targetId]
+      return {
+        isStreaming: streamingConversationIds.length > 0,
+        streamingConversationIds,
+      }
     }),
     finishStreaming: (conversationId) => {
-      const targetId = conversationId ?? get().streamingConversationId ?? get().activeId
+      const targetId = conversationId ?? get().activeId
       get().finishLastAssistant(targetId ?? undefined)
-      set({ isStreaming: false, streamingConversationId: null })
+      set((state) => {
+        const streamingConversationIds = targetId
+          ? state.streamingConversationIds.filter((id) => id !== targetId)
+          : state.streamingConversationIds
+        return {
+          isStreaming: streamingConversationIds.length > 0,
+          streamingConversationIds,
+        }
+      })
     },
   }
 })

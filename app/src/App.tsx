@@ -8,12 +8,32 @@ import { Sidebar } from './components/Sidebar'
 import MessageBubble from './components/MessageBubble'
 import { ChatInput } from './components/ChatInput'
 import { SettingsPanel } from './components/SettingsPanel'
-import type { AgentEvent, ImageAttachment } from './types/bridge'
+import type {
+  AgentDonePayload,
+  AgentErrorPayload,
+  AgentEvent,
+  AgentEventPayload,
+  ImageAttachment,
+} from './types/bridge'
 import type { PersistedChatState } from './stores/chatStore'
 
 type ScrollSnapshot = {
   scrollTop: number
   atBottom: boolean
+}
+
+type ConversationStreamState = {
+  streamedText: boolean
+  streamedThinking: boolean
+  streamedToolCallIds: Set<string>
+}
+
+function createConversationStreamState(): ConversationStreamState {
+  return {
+    streamedText: false,
+    streamedThinking: false,
+    streamedToolCallIds: new Set<string>(),
+  }
 }
 
 function loadLegacyChatState(): PersistedChatState | null {
@@ -31,7 +51,7 @@ function loadLegacyChatState(): PersistedChatState | null {
 
 export default function App() {
   const {
-    active, conversations, activeId, hydratePersistedState, isStreaming, streamingConversationId,
+    active, conversations, activeId, hydratePersistedState, streamingConversationIds,
     addMessage, appendToLastAssistant, appendThinking,
     addToolCall, updateToolCall, stopLastAssistantStreaming, startStreaming, finishStreaming,
   } = useChatStore()
@@ -72,10 +92,7 @@ export default function App() {
     return () => window.clearTimeout(timeout)
   }, [activeId, chatLoaded, conversations])
 
-  const streamedTextRef = useRef(false)
-  const streamedThinkingRef = useRef(false)
-  const streamedToolCallIdsRef = useRef(new Set<string>())
-  const streamTargetIdRef = useRef<string | null>(null)
+  const streamStatesRef = useRef(new Map<string, ConversationStreamState>())
   const initMetaRef = useRef<Record<string, unknown> | null>(null)
 
   const getConversationMessages = useCallback((conversationId?: string) => {
@@ -108,37 +125,52 @@ export default function App() {
     addMessage({ role: 'assistant', content: '', isStreaming: true }, conversationId)
   }, [addMessage, getConversationMessages, stopLastAssistantStreaming])
 
-  useEffect(() => {
-    streamTargetIdRef.current = streamingConversationId
-  }, [streamingConversationId])
+  const getStreamState = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return createConversationStreamState()
+    let state = streamStatesRef.current.get(conversationId)
+    if (!state) {
+      state = createConversationStreamState()
+      streamStatesRef.current.set(conversationId, state)
+    }
+    return state
+  }, [])
+
+  const resetStreamState = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return
+    streamStatesRef.current.set(conversationId, createConversationStreamState())
+  }, [])
+
+  const clearStreamState = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return
+    streamStatesRef.current.delete(conversationId)
+  }, [])
 
   useEffect(() => {
-    const offEvent = window.openclaude.on('agent:event', (raw: unknown) => {
-      const event = raw as Record<string, unknown>
-      const targetConversationId = streamTargetIdRef.current
+    const offEvent = window.openclaude.on('agent:event', (payload: AgentEventPayload) => {
+      const targetConversationId = payload.conversationId
+      const event = payload.event
+      const streamState = getStreamState(targetConversationId)
       if (event.type === 'stream_event') {
-        const se = (event as any).event
+        const se = (event as AgentEvent & { event?: Record<string, unknown> }).event as any
         if (!se) return
         if (se.type === 'message_start') {
-          streamedTextRef.current = false
-          streamedThinkingRef.current = false
-          streamedToolCallIdsRef.current = new Set()
+          resetStreamState(targetConversationId)
           beginAssistantTurn(targetConversationId ?? undefined)
           return
         }
         if (se.type === 'content_block_delta' && se.delta) {
           ensureAssistantPlaceholder(targetConversationId ?? undefined)
           if (se.delta.type === 'text_delta' && se.delta.text) {
-            streamedTextRef.current = true
+            streamState.streamedText = true
             appendToLastAssistant(se.delta.text, targetConversationId ?? undefined)
           }
           else if (se.delta.type === 'thinking_delta' && se.delta.thinking) {
-            streamedThinkingRef.current = true
+            streamState.streamedThinking = true
             appendThinking(se.delta.thinking, targetConversationId ?? undefined)
           }
         } else if (se.type === 'content_block_start' && se.content_block?.type === 'tool_use') {
           ensureAssistantPlaceholder(targetConversationId ?? undefined)
-          streamedToolCallIdsRef.current.add(se.content_block.id)
+          streamState.streamedToolCallIds.add(se.content_block.id)
           addToolCall({
             id: se.content_block.id,
             toolName: se.content_block.name,
@@ -150,18 +182,18 @@ export default function App() {
         return
       }
       if (event.type === 'assistant') {
-        const msg = (event as AgentEvent).message
+        const msg = event.message
         if (!msg?.content) return
         ensureAssistantPlaceholder(targetConversationId ?? undefined)
         for (const block of msg.content) {
-          if (block.type === 'text' && !streamedTextRef.current) {
+          if (block.type === 'text' && !streamState.streamedText) {
             appendToLastAssistant(block.text, targetConversationId ?? undefined)
           }
-          else if (block.type === 'thinking' && !streamedThinkingRef.current) {
+          else if (block.type === 'thinking' && !streamState.streamedThinking) {
             appendThinking(block.thinking, targetConversationId ?? undefined)
           }
           else if (block.type === 'tool_use') {
-            if (streamedToolCallIdsRef.current.has(block.id)) {
+            if (streamState.streamedToolCallIds.has(block.id)) {
               updateToolCall(block.id, {
                 args: block.input,
               }, targetConversationId ?? undefined)
@@ -179,7 +211,7 @@ export default function App() {
         return
       }
       if (event.type === 'user') {
-        const msg = (event as AgentEvent).message
+        const msg = event.message
         if (!msg?.content) return
         for (const block of msg.content) {
           if (block.type !== 'tool_result') continue
@@ -194,16 +226,16 @@ export default function App() {
         initMetaRef.current = event as Record<string, unknown>
       }
     })
-    const offDone = window.openclaude.on('agent:done', () => {
-      const targetConversationId = streamTargetIdRef.current
+    const offDone = window.openclaude.on('agent:done', (payload: AgentDonePayload) => {
+      const targetConversationId = payload.conversationId
       finishStreaming(targetConversationId ?? undefined)
-      streamTargetIdRef.current = null
+      clearStreamState(targetConversationId)
     })
-    const offError = window.openclaude.on('agent:error', (err: unknown) => {
-      const targetConversationId = streamTargetIdRef.current
-      addMessage({ role: 'assistant', content: String(err), isError: true }, targetConversationId ?? undefined)
+    const offError = window.openclaude.on('agent:error', (payload: AgentErrorPayload) => {
+      const targetConversationId = payload.conversationId
+      addMessage({ role: 'assistant', content: payload.error, isError: true }, targetConversationId ?? undefined)
       finishStreaming(targetConversationId ?? undefined)
-      streamTargetIdRef.current = null
+      clearStreamState(targetConversationId)
     })
     return () => { offEvent(); offDone(); offError() }
   }, [
@@ -213,8 +245,11 @@ export default function App() {
     addToolCall,
     updateToolCall,
     beginAssistantTurn,
+    clearStreamState,
     ensureAssistantPlaceholder,
     finishStreaming,
+    getStreamState,
+    resetStreamState,
   ])
 
   const conv = active()
@@ -350,10 +385,7 @@ export default function App() {
       return
     }
 
-    streamedTextRef.current = false
-    streamedThinkingRef.current = false
-    streamedToolCallIdsRef.current = new Set()
-    streamTargetIdRef.current = targetConversationId
+    resetStreamState(targetConversationId)
 
     const messageImages = images?.length
       ? images.map(({ base64, mediaType }) => ({ base64, mediaType }))
@@ -363,15 +395,15 @@ export default function App() {
     window.openclaude.invoke('agent:query', text, targetConversationId, images).catch((error) => {
       addMessage({ role: 'assistant', content: String(error), isError: true }, targetConversationId)
       finishStreaming(targetConversationId)
-      streamTargetIdRef.current = null
+      clearStreamState(targetConversationId)
     })
   }
 
   const handleAbort = () => {
-    const targetConversationId = streamTargetIdRef.current
-    window.openclaude.invoke('agent:abort').catch(() => undefined)
+    const targetConversationId = activeId ?? conv?.id
+    window.openclaude.invoke('agent:abort', targetConversationId ?? undefined).catch(() => undefined)
     finishStreaming(targetConversationId ?? undefined)
-    streamTargetIdRef.current = null
+    clearStreamState(targetConversationId)
   }
 
   if (!loaded || !chatLoaded) {
@@ -383,6 +415,7 @@ export default function App() {
   }
 
   const needsSetup = !settings.apiKey
+  const isActiveStreaming = activeId ? streamingConversationIds.includes(activeId) : false
 
   return (
     <div className="h-screen flex bg-background text-foreground overflow-hidden">
@@ -396,7 +429,7 @@ export default function App() {
         {/* Messages */}
         <Conversation contextRef={conversationContextRef} className="flex-1">
           <ConversationContent className="mx-auto w-full max-w-[720px] px-5 py-4">
-            {messages.length === 0 && !isStreaming && (
+            {messages.length === 0 && !isActiveStreaming && (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-6">
                 <img src="/icon.png" alt="OpenClaude" className="w-12 h-12 rounded-xl mb-4" />
                 <h1 className="text-lg font-semibold text-foreground mb-1">OpenClaude</h1>
@@ -409,13 +442,13 @@ export default function App() {
               </div>
             )}
             <div className="space-y-0">
-              {messages.map((msg) => <MessageBubble key={msg.id} message={msg} isStreaming={isStreaming} />)}
+              {messages.map((msg) => <MessageBubble key={msg.id} message={msg} isStreaming={isActiveStreaming} />)}
             </div>
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
 
-        <ChatInput onSend={handleSend} onAbort={handleAbort} isStreaming={isStreaming} />
+        <ChatInput onSend={handleSend} onAbort={handleAbort} isStreaming={isActiveStreaming} />
       </div>
       {showPanel && <SettingsPanel />}
     </div>

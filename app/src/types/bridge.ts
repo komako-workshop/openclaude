@@ -36,6 +36,20 @@ export type AgentEvent = {
   num_turns?: number
 }
 
+export type AgentEventPayload = {
+  conversationId: string | null
+  event: AgentEvent
+}
+
+export type AgentDonePayload = {
+  conversationId: string | null
+}
+
+export type AgentErrorPayload = {
+  conversationId: string | null
+  error: string
+}
+
 export interface OpenClaudeBridge {
   invoke(channel: 'settings:load'): Promise<Settings>
   invoke(channel: 'settings:save', settings: Settings): Promise<boolean>
@@ -44,15 +58,15 @@ export interface OpenClaudeBridge {
   invoke(channel: 'chat:deleteConversationSession', conversationId: string): Promise<boolean>
   invoke(channel: 'dialog:selectDirectory'): Promise<string | null>
   invoke(channel: 'agent:query', prompt: string, conversationId?: string, images?: ImageAttachment[]): Promise<void>
-  invoke(channel: 'agent:abort'): Promise<void>
+  invoke(channel: 'agent:abort', conversationId?: string): Promise<void>
   invoke(channel: 'agent:reset'): Promise<boolean>
   invoke(channel: 'shell:openExternal', url: string): Promise<void>
   invoke(channel: 'image:preview', base64: string, mediaType: string): Promise<boolean>
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 
-  on(channel: 'agent:event', cb: (event: AgentEvent) => void): () => void
-  on(channel: 'agent:done', cb: () => void): () => void
-  on(channel: 'agent:error', cb: (error: string) => void): () => void
+  on(channel: 'agent:event', cb: (payload: AgentEventPayload) => void): () => void
+  on(channel: 'agent:done', cb: (payload: AgentDonePayload) => void): () => void
+  on(channel: 'agent:error', cb: (payload: AgentErrorPayload) => void): () => void
   on(channel: string, cb: (...args: unknown[]) => void): () => void
 
   platform: string
