@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent, type DragEvent } from 'react'
-import { ArrowUp, Square, ChevronDown, Check, Search, Paperclip, X } from 'lucide-react'
+import { useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent, type DragEvent, type ClipboardEvent } from 'react'
+import { ArrowUp, Square, ChevronDown, Check, Search, Paperclip, X, Image as ImageIcon } from 'lucide-react'
 import { useSettingsStore } from '../stores/settingsStore'
+import type { ImageAttachment } from '../types/bridge'
 
 type ModelEntry = { value: string; label: string; provider: string }
 
@@ -26,14 +27,43 @@ function getModelsForBaseURL(baseURL: string): ModelEntry[] {
 const PROVIDERS = ['Anthropic'] as const
 
 type AttachedFile = { name: string; path: string }
+type AttachedImageLocal = ImageAttachment & { previewUrl: string }
 
-type Props = { onSend: (text: string) => void; onAbort: () => void; isStreaming: boolean }
+const IMAGE_MIME_RE = /^image\/(png|jpe?g|gif|webp)$/
+
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+}
+
+async function fileToAttachedImage(file: File): Promise<AttachedImageLocal | null> {
+  if (!IMAGE_MIME_RE.test(file.type)) return null
+  const dataUrl = await readFileAsDataURL(file)
+  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+  return {
+    name: file.name || 'image.png',
+    base64,
+    mediaType: file.type || 'image/png',
+    previewUrl: URL.createObjectURL(file),
+  }
+}
+
+type Props = {
+  onSend: (text: string, images?: ImageAttachment[]) => void
+  onAbort: () => void
+  isStreaming: boolean
+}
 
 export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
   const [text, setText] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([])
+  const [attachedImages, setAttachedImages] = useState<AttachedImageLocal[]>([])
   const [dragOver, setDragOver] = useState(false)
   const ref = useRef<HTMLTextAreaElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -56,9 +86,11 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
     return () => { document.removeEventListener('mousedown', handler); window.clearTimeout(timer) }
   }, [menuOpen])
 
+  const hasContent = text.trim() || attachedFiles.length > 0 || attachedImages.length > 0
+
   const submit = () => {
     const trimmed = text.trim()
-    if (!trimmed && attachedFiles.length === 0) return
+    if (!trimmed && attachedFiles.length === 0 && attachedImages.length === 0) return
     if (isStreaming) return
 
     let prompt = trimmed
@@ -66,12 +98,18 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
       const fileList = attachedFiles.map((f) => f.path).join('\n')
       const prefix = `[User attached ${attachedFiles.length} file(s). Read them with the Read tool before responding:\n${fileList}\n]\n\n`
       prompt = prefix + prompt
-      if (!trimmed) prompt = prefix + 'Please review the attached file(s).'
+      if (!trimmed && attachedImages.length === 0) prompt = prefix + 'Please review the attached file(s).'
     }
 
-    onSend(prompt)
+    const images = attachedImages.length > 0
+      ? attachedImages.map(({ base64, mediaType, name }) => ({ base64, mediaType, name }))
+      : undefined
+
+    onSend(prompt, images)
     setText('')
     setAttachedFiles([])
+    for (const img of attachedImages) URL.revokeObjectURL(img.previewUrl)
+    setAttachedImages([])
     if (ref.current) ref.current.style.height = '42px'
   }
 
@@ -92,7 +130,14 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'
   }, [])
 
-  const handleDrop = useCallback((e: DragEvent) => {
+  const addImageFiles = useCallback(async (files: File[]) => {
+    const results = await Promise.all(files.map(fileToAttachedImage))
+    const valid = results.filter((r): r is AttachedImageLocal => r !== null)
+    if (valid.length > 0) setAttachedImages((prev) => [...prev, ...valid])
+    return valid.length
+  }, [])
+
+  const handleDrop = useCallback(async (e: DragEvent) => {
     e.preventDefault()
     dragCounterRef.current = 0
     setDragOver(false)
@@ -100,21 +145,48 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
     const files = e.dataTransfer?.files
     if (!files?.length) return
 
-    const newFiles: AttachedFile[] = []
+    const imageFiles: File[] = []
+    const nonImageFiles: AttachedFile[] = []
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
-      const filePath = (file as File & { path?: string }).path
-      if (filePath) {
-        newFiles.push({ name: file.name, path: filePath })
+      if (IMAGE_MIME_RE.test(file.type)) {
+        imageFiles.push(file)
+      } else {
+        const filePath = (file as File & { path?: string }).path
+        if (filePath) nonImageFiles.push({ name: file.name, path: filePath })
       }
     }
-    if (newFiles.length > 0) {
-      setAttachedFiles((prev) => [...prev, ...newFiles])
+    if (nonImageFiles.length > 0) setAttachedFiles((prev) => [...prev, ...nonImageFiles])
+    if (imageFiles.length > 0) await addImageFiles(imageFiles)
+  }, [addImageFiles])
+
+  const handlePaste = useCallback(async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+
+    const imageFiles: File[] = []
+    for (const item of items) {
+      if (item.kind === 'file' && IMAGE_MIME_RE.test(item.type)) {
+        const file = item.getAsFile()
+        if (file) imageFiles.push(file)
+      }
     }
-  }, [])
+    if (imageFiles.length > 0) {
+      e.preventDefault()
+      await addImageFiles(imageFiles)
+    }
+  }, [addImageFiles])
 
   const removeFile = useCallback((index: number) => {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index))
+  }, [])
+
+  const removeImage = useCallback((index: number) => {
+    setAttachedImages((prev) => {
+      const removed = prev[index]
+      if (removed) URL.revokeObjectURL(removed.previewUrl)
+      return prev.filter((_, i) => i !== index)
+    })
   }, [])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -212,9 +284,30 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {/* Attached files */}
-          {attachedFiles.length > 0 && (
+          {/* Attached files & images */}
+          {(attachedFiles.length > 0 || attachedImages.length > 0) && (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+              {attachedImages.map((img, index) => (
+                <div
+                  key={`img-${index}`}
+                  className="relative group/img"
+                  onDoubleClick={() => window.openclaude.invoke('image:preview', img.base64, img.mediaType)}
+                >
+                  <img
+                    src={img.previewUrl}
+                    alt={img.name}
+                    className="h-14 w-14 rounded-lg object-cover cursor-pointer border"
+                    style={{ borderColor: 'var(--border)' }}
+                  />
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeImage(index) }}
+                    className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity"
+                    style={{ background: 'var(--fg)', color: 'var(--bg)' }}
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
               {attachedFiles.map((file, index) => (
                 <span
                   key={`${file.path}-${index}`}
@@ -237,6 +330,7 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
 
           <textarea
             ref={ref} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder={dragOver ? 'Drop files here…' : 'Message OpenClaude…'} rows={1}
             className="w-full resize-none bg-transparent px-4 pt-3 pb-2 text-sm focus:outline-none"
             style={{ color: 'var(--fg)', maxHeight: 160, minHeight: 42 }}
@@ -260,9 +354,9 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
                 <Square size={14} />
               </button>
             ) : (
-              <button onClick={submit} disabled={!text.trim() && attachedFiles.length === 0}
+              <button onClick={submit} disabled={!hasContent}
                 className="p-1.5 rounded-lg text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-                style={{ background: (text.trim() || attachedFiles.length > 0) ? 'var(--primary)' : 'var(--muted-fg)' }}>
+                style={{ background: hasContent ? 'var(--primary)' : 'var(--muted-fg)' }}>
                 <ArrowUp size={14} strokeWidth={2.5} />
               </button>
             )}

@@ -8,6 +8,12 @@ export type Settings = {
   permissionMode: 'bypassPermissions' | 'acceptEdits' | 'default'
 }
 
+export type ImageAttachment = {
+  base64: string
+  mediaType: string
+  name: string
+}
+
 export type AgentEvent = {
   type: 'assistant' | 'user' | 'result' | 'tool_use' | string
   subtype?: string
@@ -37,10 +43,11 @@ export interface OpenClaudeBridge {
   invoke(channel: 'chat:save', state: PersistedChatState): Promise<boolean>
   invoke(channel: 'chat:deleteConversationSession', conversationId: string): Promise<boolean>
   invoke(channel: 'dialog:selectDirectory'): Promise<string | null>
-  invoke(channel: 'agent:query', prompt: string, conversationId?: string): Promise<void>
+  invoke(channel: 'agent:query', prompt: string, conversationId?: string, images?: ImageAttachment[]): Promise<void>
   invoke(channel: 'agent:abort'): Promise<void>
   invoke(channel: 'agent:reset'): Promise<boolean>
   invoke(channel: 'shell:openExternal', url: string): Promise<void>
+  invoke(channel: 'image:preview', base64: string, mediaType: string): Promise<boolean>
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 
   on(channel: 'agent:event', cb: (event: AgentEvent) => void): () => void

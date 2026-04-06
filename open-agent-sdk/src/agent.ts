@@ -34,6 +34,7 @@ import type { Tool, Tools } from './Tool.js'
 import type { Message } from './types/message.js'
 import type { CanUseToolFn } from './hooks/useCanUseTool.js'
 import type { ThinkingConfig } from './utils/thinking.js'
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 
 // ============================================================================
 // Types
@@ -275,7 +276,7 @@ export class Agent {
    * Uses the full QueryEngine internally.
    */
   async *query(
-    prompt: string,
+    prompt: string | ContentBlockParam[],
     overrides?: Partial<AgentOptions>,
   ): AsyncGenerator<SDKMessage, void> {
     // Wait for async initialization (MCP connections, etc.)

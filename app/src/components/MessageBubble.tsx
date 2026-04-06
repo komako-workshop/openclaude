@@ -44,6 +44,7 @@ function UserMessage({ message }: { message: ChatMessage }) {
   const [overflows, setOverflows] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const { stopScroll } = useStickToBottomContext()
+  const hasImages = Boolean(message.images?.length)
 
   useEffect(() => {
     if (ref.current) setOverflows(ref.current.scrollHeight > COLLAPSE_HEIGHT)
@@ -52,31 +53,49 @@ function UserMessage({ message }: { message: ChatMessage }) {
   return (
     <div className="flex justify-end mt-6 mb-2">
       <div className="relative max-w-[85%]">
-        <div
-          ref={ref}
-          className="rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed overflow-hidden transition-[max-height] duration-300"
-          style={{
-            background: 'var(--user-bubble)',
-            color: 'var(--user-bubble-fg)',
-            maxHeight: overflows && !expanded ? COLLAPSE_HEIGHT : undefined,
-          }}
-        >
-          {message.content}
-        </div>
-        {overflows && !expanded && (
-          <div className="absolute bottom-0 left-0 right-0 h-16 rounded-b-2xl pointer-events-none"
-            style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
+        {hasImages && (
+          <div className="flex flex-wrap gap-1.5 justify-end mb-1.5">
+            {message.images!.map((img, i) => (
+              <img
+                key={i}
+                src={`data:${img.mediaType};base64,${img.base64}`}
+                alt=""
+                className="rounded-xl object-cover cursor-pointer max-h-48 max-w-full border"
+                style={{ borderColor: 'color-mix(in srgb, var(--user-bubble) 60%, transparent)' }}
+                onDoubleClick={() => window.openclaude.invoke('image:preview', img.base64, img.mediaType)}
+              />
+            ))}
+          </div>
         )}
-        {overflows && (
-          <button onClick={() => {
-            const willExpand = !expanded
-            setExpanded(willExpand)
-            if (willExpand) stopScroll()
-          }}
-            className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
-            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-            <span>{expanded ? 'Collapse' : 'Expand'}</span>
-          </button>
+        {message.content && (
+          <>
+            <div
+              ref={ref}
+              className="rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed overflow-hidden transition-[max-height] duration-300"
+              style={{
+                background: 'var(--user-bubble)',
+                color: 'var(--user-bubble-fg)',
+                maxHeight: overflows && !expanded ? COLLAPSE_HEIGHT : undefined,
+              }}
+            >
+              {message.content}
+            </div>
+            {overflows && !expanded && (
+              <div className="absolute bottom-0 left-0 right-0 h-16 rounded-b-2xl pointer-events-none"
+                style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
+            )}
+            {overflows && (
+              <button onClick={() => {
+                const willExpand = !expanded
+                setExpanded(willExpand)
+                if (willExpand) stopScroll()
+              }}
+                className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                <span>{expanded ? 'Collapse' : 'Expand'}</span>
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>

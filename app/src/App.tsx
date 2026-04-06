@@ -8,7 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import MessageBubble from './components/MessageBubble'
 import { ChatInput } from './components/ChatInput'
 import { SettingsPanel } from './components/SettingsPanel'
-import type { AgentEvent } from './types/bridge'
+import type { AgentEvent, ImageAttachment } from './types/bridge'
 import type { PersistedChatState } from './stores/chatStore'
 
 type ScrollSnapshot = {
@@ -284,7 +284,7 @@ export default function App() {
     messageCountRef.current = messages.length
   }, [activeId, messages.length])
 
-  const handleSend = (text: string) => {
+  const handleSend = (text: string, images?: ImageAttachment[]) => {
     const targetConversationId = activeId ?? conv?.id
     if (!targetConversationId) return
 
@@ -354,9 +354,13 @@ export default function App() {
     streamedThinkingRef.current = false
     streamedToolCallIdsRef.current = new Set()
     streamTargetIdRef.current = targetConversationId
-    addMessage({ role: 'user', content: text }, targetConversationId)
+
+    const messageImages = images?.length
+      ? images.map(({ base64, mediaType }) => ({ base64, mediaType }))
+      : undefined
+    addMessage({ role: 'user', content: text, images: messageImages }, targetConversationId)
     startStreaming(targetConversationId)
-    window.openclaude.invoke('agent:query', text, targetConversationId).catch((error) => {
+    window.openclaude.invoke('agent:query', text, targetConversationId, images).catch((error) => {
       addMessage({ role: 'assistant', content: String(error), isError: true }, targetConversationId)
       finishStreaming(targetConversationId)
       streamTargetIdRef.current = null

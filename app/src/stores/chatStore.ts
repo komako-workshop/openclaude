@@ -10,6 +10,11 @@ export interface ToolCallInfo {
   completedAt?: number
 }
 
+export interface ChatMessageImage {
+  base64: string
+  mediaType: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'assistant'
@@ -19,6 +24,7 @@ export interface ChatMessage {
   isError?: boolean
   thinkingContent?: string
   toolCalls?: ToolCallInfo[]
+  images?: ChatMessageImage[]
 }
 
 export interface Conversation {

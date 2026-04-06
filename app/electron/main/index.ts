@@ -350,15 +350,45 @@ function resetAgent() {
   currentSettingsKey = ''
 }
 
-async function runAgentQuery(prompt: string, settings: Settings, conversationId?: string) {
+type ImageAttachment = { base64: string; mediaType: string; name: string }
+
+function buildPromptWithImages(
+  text: string,
+  images: ImageAttachment[],
+): string | Array<{ type: string; [k: string]: unknown }> {
+  if (!images || images.length === 0) return text
+
+  const blocks: Array<{ type: string; [k: string]: unknown }> = []
+  for (const img of images) {
+    blocks.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: img.mediaType,
+        data: img.base64,
+      },
+    })
+  }
+  blocks.push({ type: 'text', text: text || 'What do you see in this image?' })
+  return blocks
+}
+
+async function runAgentQuery(
+  prompt: string,
+  settings: Settings,
+  conversationId?: string,
+  images?: ImageAttachment[],
+) {
   const agent = await getOrCreateAgent(settings, conversationId)
 
   activeAbortController = new AbortController()
 
+  const queryPrompt = buildPromptWithImages(prompt, images ?? [])
+
   let eventCount = 0
   const t0 = Date.now()
 
-  for await (const event of agent.query(prompt, { abortSignal: activeAbortController.signal })) {
+  for await (const event of agent.query(queryPrompt as any, { abortSignal: activeAbortController.signal })) {
     if (activeAbortController?.signal.aborted) break
     eventCount++
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
@@ -425,14 +455,14 @@ function registerIPC() {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('agent:query', async (_e, prompt: string, conversationId?: string) => {
+  ipcMain.handle('agent:query', async (_e, prompt: string, conversationId?: string, images?: ImageAttachment[]) => {
     const settings = loadSettings()
     if (!settings.apiKey) {
       mainWindow?.webContents.send('agent:error', 'API key 未设置，请先在设置中配置。')
       return
     }
     try {
-      await runAgentQuery(prompt, settings, conversationId)
+      await runAgentQuery(prompt, settings, conversationId, images)
     } catch (err: any) {
       mainWindow?.webContents.send('agent:error', err.message ?? String(err))
     }
@@ -450,6 +480,21 @@ function registerIPC() {
 
   ipcMain.handle('shell:openExternal', (_e, url: string) => {
     shell.openExternal(url)
+  })
+
+  ipcMain.handle('image:preview', async (_e, base64: string, mediaType: string) => {
+    try {
+      const ext = (mediaType.split('/')[1] || 'png').replace('jpeg', 'jpg')
+      const tmpDir = join(os.tmpdir(), 'openclaude-previews')
+      if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true })
+      const filePath = join(tmpDir, `preview-${Date.now()}.${ext}`)
+      fs.writeFileSync(filePath, Buffer.from(base64, 'base64'))
+      await shell.openPath(filePath)
+      return true
+    } catch (err) {
+      console.error('[image:preview]', err)
+      return false
+    }
   })
 }
 

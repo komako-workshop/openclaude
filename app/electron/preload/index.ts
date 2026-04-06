@@ -11,6 +11,7 @@ const INVOKE_CHANNELS = [
   'agent:abort',
   'agent:reset',
   'shell:openExternal',
+  'image:preview',
 ] as const
 
 const ON_CHANNELS = [
