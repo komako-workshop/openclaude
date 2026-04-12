@@ -6,7 +6,7 @@
 
 Claude Code 在国内疯狂封号，很多人用不了。这个客户端接 OpenRouter 或任何 Anthropic 兼容的 API，绕过官方登录，直接获得 Claude Code 的完整能力：读文件、改代码、跑命令、搜索、MCP —— 都能用。
 
-底层基于 [open-agent-sdk](https://github.com/shipany-ai/open-agent-sdk)，引擎在 Electron 主进程内直接运行，不需要安装官方 Claude Code CLI。
+底层使用 Claude Code SDK 作为 agent 引擎，在 Electron 主进程内直接运行，不需要安装官方 Claude Code CLI。
 
 ## 安装
 
@@ -56,7 +56,7 @@ npm run dev
 ## 技术栈
 
 - Electron + React + Tailwind CSS + Vite
-- [@shipany/open-agent-sdk](https://www.npmjs.com/package/@shipany/open-agent-sdk) 作为 agent 引擎
+- 使用 Claude Code SDK 作为 agent 引擎
 - Zustand 状态管理
 - Streamdown Markdown 渲染
 
