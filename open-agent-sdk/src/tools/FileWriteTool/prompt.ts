@@ -13,6 +13,7 @@ export function getWriteToolDescription(): string {
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.${getPreReadInstruction()}
 - Prefer the Edit tool for modifying existing files \u2014 it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- Avoid sending a huge full-file body in one Write call when a smaller strategy would work. For large files, prefer writing a small scaffold first and then using Edit in smaller chunks, or generate repetitive content with compact Bash/Python code instead of pasting the whole file into the tool input.
 - NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.`
 }

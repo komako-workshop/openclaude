@@ -2677,10 +2677,11 @@ export function normalizeContentFromAPI(
         if (typeof contentBlock.input === 'string') {
           const parsed = safeParseJSON(contentBlock.input)
           if (parsed === null && contentBlock.input.length > 0) {
-            // TET/FC-v3 diagnostic: the streamed tool input JSON failed to
-            // parse. We fall back to {} which means downstream validation
-            // sees empty input. The raw prefix goes to debug log only — no
-            // PII-tagged proto column exists for it yet.
+            // Large streamed tool inputs can arrive malformed via some proxy
+            // providers. Returning {} here turns the real parsing failure into
+            // a misleading InputValidationError ("file_path/content missing").
+            // Throw instead so the caller can trigger its existing
+            // streaming->non-streaming fallback path.
             logEvent('tengu_tool_input_json_parse_fail', {
               toolName: sanitizeToolNameForAnalytics(contentBlock.name),
               inputLen: contentBlock.input.length,
@@ -2691,6 +2692,11 @@ export function normalizeContentFromAPI(
                 { level: 'warn' },
               )
             }
+            const error = new Error(
+              `Tool input JSON parse failed for ${contentBlock.name}`,
+            )
+            error.name = 'ToolInputJSONParseError'
+            throw error
           }
           normalizedInput = parsed ?? {}
         } else {

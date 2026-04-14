@@ -147,6 +147,117 @@ You may provide well-known URLs when the user asks (official websites, documenta
     ],
   },
   {
+    file: join(root, 'utils', 'messages.js'),
+    replacements: [
+      {
+        from: `                if (typeof contentBlock.input === 'string') {
+                    const parsed = safeParseJSON(contentBlock.input);
+                    if (parsed === null && contentBlock.input.length > 0) {
+                        // TET/FC-v3 diagnostic: the streamed tool input JSON failed to
+                        // parse. We fall back to {} which means downstream validation
+                        // sees empty input. The raw prefix goes to debug log only — no
+                        // PII-tagged proto column exists for it yet.
+                        logEvent('tengu_tool_input_json_parse_fail', {
+                            toolName: sanitizeToolNameForAnalytics(contentBlock.name),
+                            inputLen: contentBlock.input.length,
+                        });
+                        if (process.env.USER_TYPE === 'ant') {
+                            logForDebugging(\`tool input JSON parse fail: \${contentBlock.input.slice(0, 200)}\`, { level: 'warn' });
+                        }
+                    }
+                    normalizedInput = parsed ?? {};
+                }`,
+        to: `                if (typeof contentBlock.input === 'string') {
+                    const parsed = safeParseJSON(contentBlock.input);
+                    if (parsed === null && contentBlock.input.length > 0) {
+                        logEvent('tengu_tool_input_json_parse_fail', {
+                            toolName: sanitizeToolNameForAnalytics(contentBlock.name),
+                            inputLen: contentBlock.input.length,
+                        });
+                        if (process.env.USER_TYPE === 'ant') {
+                            logForDebugging(\`tool input JSON parse fail: \${contentBlock.input.slice(0, 200)}\`, { level: 'warn' });
+                        }
+                        const error = new Error(\`Tool input JSON parse failed for \${contentBlock.name}\`);
+                        error.name = 'ToolInputJSONParseError';
+                        throw error;
+                    }
+                    normalizedInput = parsed ?? {};
+                }`,
+      },
+    ],
+  },
+  {
+    file: join(root, 'tools', 'FileWriteTool', 'prompt.js'),
+    replacements: [
+      {
+        from: `export function getWriteToolDescription() {
+    return \`Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.\${getPreReadInstruction()}
+- Prefer the Edit tool for modifying existing files \\u2014 it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.\`;
+}`,
+        to: `export function getWriteToolDescription() {
+    return \`Writes a file to the local filesystem.
+
+Usage:
+- This tool will overwrite the existing file if there is one at the provided path.\${getPreReadInstruction()}
+- Prefer the Edit tool for modifying existing files \\u2014 it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- Avoid sending a huge full-file body in one Write call when a smaller strategy would work. For large files, prefer writing a small scaffold first and then using Edit in smaller chunks, or generate repetitive content with compact Bash/Python code instead of pasting the whole file into the tool input.
+- NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
+- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.\`;
+}`,
+      },
+    ],
+  },
+  {
+    file: join(root, 'services', 'tools', 'toolExecution.js'),
+    replacements: [
+      {
+        from: `}
+async function checkPermissionsAndCallTool(tool, toolUseID, input, toolUseContext, canUseTool, assistantMessage, messageId, requestId, mcpServerType, mcpServerBaseUrl, onToolProgress) {`,
+        to: `}
+function buildLargeWriteTruncationHint(tool, input) {
+    if (tool.name !== 'Write')
+        return null;
+    const hasFilePath = typeof input.file_path === 'string' && input.file_path.length > 0;
+    const hasContent = typeof input.content === 'string' && input.content.length > 0;
+    if (hasFilePath || hasContent)
+        return null;
+    return ('\\n\\nThis often means your API provider truncated a large Write tool payload and returned an empty input object. ' +
+        'Do not retry the same full-file Write. Instead, write a small scaffold first and then use Edit in smaller chunks, ' +
+        'or use compact Bash/Python code to generate repetitive content without putting the entire file into one tool argument.');
+}
+// OpenClaude patch: large Write truncation recovery
+async function checkPermissionsAndCallTool(tool, toolUseID, input, toolUseContext, canUseTool, assistantMessage, messageId, requestId, mcpServerType, mcpServerBaseUrl, onToolProgress) {`,
+      },
+      {
+        from: `        if (schemaHint) {
+            logEvent('tengu_deferred_tool_schema_not_sent', {
+                toolName: sanitizeToolNameForAnalytics(tool.name),
+                isMcp: tool.isMcp ?? false,
+            });
+            errorContent += schemaHint;
+        }
+        logForDebugging(\`\${tool.name} tool input error: \${errorContent.slice(0, 200)}\`);`,
+        to: `        if (schemaHint) {
+            logEvent('tengu_deferred_tool_schema_not_sent', {
+                toolName: sanitizeToolNameForAnalytics(tool.name),
+                isMcp: tool.isMcp ?? false,
+            });
+            errorContent += schemaHint;
+        }
+        const largeWriteHint = buildLargeWriteTruncationHint(tool, input);
+        if (largeWriteHint) {
+            errorContent += largeWriteHint;
+        }
+        logForDebugging(\`\${tool.name} tool input error: \${errorContent.slice(0, 200)}\`);`,
+      },
+    ],
+  },
+  {
     file: join(root, 'constants', 'outputStyles.js'),
     replacements: [
       {

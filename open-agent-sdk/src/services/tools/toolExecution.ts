@@ -597,6 +597,26 @@ export function buildSchemaNotSentHint(
   )
 }
 
+function buildLargeWriteTruncationHint(
+  tool: Tool,
+  input: Record<string, unknown>,
+): string | null {
+  if (tool.name !== 'Write') return null
+
+  const hasFilePath =
+    typeof input.file_path === 'string' && input.file_path.length > 0
+  const hasContent =
+    typeof input.content === 'string' && input.content.length > 0
+
+  if (hasFilePath || hasContent) return null
+
+  return (
+    '\n\nThis often means your API provider truncated a large Write tool payload and returned an empty input object. ' +
+    'Do not retry the same full-file Write. Instead, write a small scaffold first and then use Edit in smaller chunks, ' +
+    'or use compact Bash/Python code to generate repetitive content without putting the entire file into one tool argument.'
+  )
+}
+
 async function checkPermissionsAndCallTool(
   tool: Tool,
   toolUseID: string,
@@ -628,6 +648,14 @@ async function checkPermissionsAndCallTool(
         isMcp: tool.isMcp ?? false,
       })
       errorContent += schemaHint
+    }
+
+    const largeWriteHint = buildLargeWriteTruncationHint(
+      tool,
+      input as Record<string, unknown>,
+    )
+    if (largeWriteHint) {
+      errorContent += largeWriteHint
     }
 
     logForDebugging(
