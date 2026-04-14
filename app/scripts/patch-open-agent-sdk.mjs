@@ -258,6 +258,133 @@ async function checkPermissionsAndCallTool(tool, toolUseID, input, toolUseContex
     ],
   },
   {
+    file: join(root, 'utils', 'imageResizer.js'),
+    replacements: [
+      {
+        from: `        // Size-under-5MB does not imply dimensions-under-cap. Don't return the
+        // raw buffer if the PNG header says it's oversized — fall through to
+        // ImageResizeError instead. PNG sig is 8 bytes, IHDR dims at 16-24.
+        const overDim = imageBuffer.length >= 24 &&
+            imageBuffer[0] === 0x89 &&
+            imageBuffer[1] === 0x50 &&
+            imageBuffer[2] === 0x4e &&
+            imageBuffer[3] === 0x47 &&
+            (imageBuffer.readUInt32BE(16) > IMAGE_MAX_WIDTH ||
+                imageBuffer.readUInt32BE(20) > IMAGE_MAX_HEIGHT);
+        // If original image's base64 encoding is within API limit, allow it through uncompressed
+        if (base64Size <= API_IMAGE_MAX_BASE64_SIZE && !overDim) {
+            logEvent('tengu_image_resize_fallback', {
+                original_size_bytes: originalSize,
+                base64_size_bytes: base64Size,
+                error_type: errorType,
+            });
+            return { buffer: imageBuffer, mediaType: normalizedExt };
+        }
+        // Image is too large and we failed to compress it - fail with user-friendly error
+        throw new ImageResizeError(overDim
+            ? \`Unable to resize image — dimensions exceed the \${IMAGE_MAX_WIDTH}x\${IMAGE_MAX_HEIGHT}px limit and image processing failed. \` +
+                \`Please resize the image to reduce its pixel dimensions.\`
+            : \`Unable to resize image (\${formatFileSize(originalSize)} raw, \${formatFileSize(base64Size)} base64). \` +
+                \`The image exceeds the 5MB API limit and compression failed. \` +
+                \`Please resize the image manually or use a smaller image.\`);`,
+        to: `        // The API's real hard stop is the encoded payload size, not our local
+        // 2000x2000 resize target. If local processing fails but the original
+        // image is already within the API budget, pass it through untouched
+        // instead of blocking the user on a best-effort resize failure.
+        if (base64Size <= API_IMAGE_MAX_BASE64_SIZE) {
+            logEvent('tengu_image_resize_fallback', {
+                original_size_bytes: originalSize,
+                base64_size_bytes: base64Size,
+                error_type: errorType,
+            });
+            return { buffer: imageBuffer, mediaType: normalizedExt };
+        }
+        // Image is too large and we failed to compress it - fail with user-friendly error
+        throw new ImageResizeError(\`Unable to resize image (\${formatFileSize(originalSize)} raw, \${formatFileSize(base64Size)} base64). \` +
+            \`The image exceeds the 5MB API limit and compression failed. \` +
+            \`Please resize the image manually or use a smaller image.\`);`,
+      },
+    ],
+  },
+  {
+    file: join(root, 'tasks', 'LocalAgentTask', 'LocalAgentTask.js'),
+    replacements: [
+      {
+        from: `export function updateProgressFromMessage(tracker, message, resolveActivityDescription, tools) {
+    if (message.type !== 'assistant') {
+        return;
+    }
+    const usage = message.message.usage;
+    // Keep latest input (it's cumulative in the API), sum outputs
+    tracker.latestInputTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+    tracker.cumulativeOutputTokens += usage.output_tokens;
+    for (const content of message.message.content) {`,
+        to: `export function updateProgressFromMessage(tracker, message, resolveActivityDescription, tools) {
+    if (message.type !== 'assistant') {
+        return;
+    }
+    const usage = message.message.usage;
+    // Sub-agents can emit assistant-shaped error messages when the upstream
+    // stream fails before usage arrives. Those messages still belong in the
+    // transcript, but they should not crash progress tracking.
+    if (usage) {
+        // Keep latest input (it's cumulative in the API), sum outputs
+        tracker.latestInputTokens = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+        tracker.cumulativeOutputTokens += usage.output_tokens;
+    }
+    const contentBlocks = Array.isArray(message.message.content) ? message.message.content : [];
+    for (const content of contentBlocks) {`,
+      },
+    ],
+  },
+  {
+    file: join(root, 'tools', 'AgentTool', 'agentToolUtils.js'),
+    replacements: [
+      {
+        from: `export function countToolUses(messages) {
+    let count = 0;`,
+        to: `function getLastAgentUsage(messages) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const message = messages[i];
+        if (message?.type !== 'assistant')
+            continue;
+        const usage = message.message.usage;
+        if (usage)
+            return usage;
+    }
+    return {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_input_tokens: 0,
+        cache_read_input_tokens: 0,
+        server_tool_use: {
+            web_search_requests: 0,
+            web_fetch_requests: 0,
+        },
+        service_tier: 'standard',
+        cache_creation: {
+            ephemeral_1h_input_tokens: 0,
+            ephemeral_5m_input_tokens: 0,
+        },
+    };
+}
+export function countToolUses(messages) {
+    let count = 0;`,
+      },
+      {
+        from: `    const totalTokens = getTokenCountFromUsage(lastAssistantMessage.message.usage);
+    const totalToolUseCount = countToolUses(agentMessages);`,
+        to: `    const finalUsage = getLastAgentUsage(agentMessages);
+    const totalTokens = getTokenCountFromUsage(finalUsage);
+    const totalToolUseCount = countToolUses(agentMessages);`,
+      },
+      {
+        from: `        usage: lastAssistantMessage.message.usage,`,
+        to: `        usage: finalUsage,`,
+      },
+    ],
+  },
+  {
     file: join(root, 'constants', 'outputStyles.js'),
     replacements: [
       {

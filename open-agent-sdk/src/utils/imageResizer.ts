@@ -398,20 +398,11 @@ export async function maybeResizeAndDownsampleImageBuffer(
     // Calculate the base64 size (API limit is on base64-encoded length)
     const base64Size = Math.ceil((originalSize * 4) / 3)
 
-    // Size-under-5MB does not imply dimensions-under-cap. Don't return the
-    // raw buffer if the PNG header says it's oversized — fall through to
-    // ImageResizeError instead. PNG sig is 8 bytes, IHDR dims at 16-24.
-    const overDim =
-      imageBuffer.length >= 24 &&
-      imageBuffer[0] === 0x89 &&
-      imageBuffer[1] === 0x50 &&
-      imageBuffer[2] === 0x4e &&
-      imageBuffer[3] === 0x47 &&
-      (imageBuffer.readUInt32BE(16) > IMAGE_MAX_WIDTH ||
-        imageBuffer.readUInt32BE(20) > IMAGE_MAX_HEIGHT)
-
-    // If original image's base64 encoding is within API limit, allow it through uncompressed
-    if (base64Size <= API_IMAGE_MAX_BASE64_SIZE && !overDim) {
+    // The API's real hard stop is the encoded payload size, not our local
+    // 2000x2000 resize target. If local processing fails but the original
+    // image is already within the API budget, pass it through untouched
+    // instead of blocking the user on a best-effort resize failure.
+    if (base64Size <= API_IMAGE_MAX_BASE64_SIZE) {
       logEvent('tengu_image_resize_fallback', {
         original_size_bytes: originalSize,
         base64_size_bytes: base64Size,
@@ -422,12 +413,9 @@ export async function maybeResizeAndDownsampleImageBuffer(
 
     // Image is too large and we failed to compress it - fail with user-friendly error
     throw new ImageResizeError(
-      overDim
-        ? `Unable to resize image — dimensions exceed the ${IMAGE_MAX_WIDTH}x${IMAGE_MAX_HEIGHT}px limit and image processing failed. ` +
-            `Please resize the image to reduce its pixel dimensions.`
-        : `Unable to resize image (${formatFileSize(originalSize)} raw, ${formatFileSize(base64Size)} base64). ` +
-            `The image exceeds the 5MB API limit and compression failed. ` +
-            `Please resize the image manually or use a smaller image.`,
+      `Unable to resize image (${formatFileSize(originalSize)} raw, ${formatFileSize(base64Size)} base64). ` +
+        `The image exceeds the 5MB API limit and compression failed. ` +
+        `Please resize the image manually or use a smaller image.`,
     )
   }
 }

@@ -260,6 +260,31 @@ export const agentToolResultSchema = lazySchema(() =>
 
 export type AgentToolResult = z.input<ReturnType<typeof agentToolResultSchema>>
 
+function getLastAgentUsage(messages: MessageType[]) {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message?.type !== 'assistant') continue
+    const usage = message.message.usage
+    if (usage) return usage
+  }
+
+  return {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    server_tool_use: {
+      web_search_requests: 0,
+      web_fetch_requests: 0,
+    },
+    service_tier: 'standard' as const,
+    cache_creation: {
+      ephemeral_1h_input_tokens: 0,
+      ephemeral_5m_input_tokens: 0,
+    },
+  }
+}
+
 export function countToolUses(messages: MessageType[]): number {
   let count = 0
   for (const m of messages) {
@@ -317,7 +342,8 @@ export function finalizeAgentTool(
     }
   }
 
-  const totalTokens = getTokenCountFromUsage(lastAssistantMessage.message.usage)
+  const finalUsage = getLastAgentUsage(agentMessages)
+  const totalTokens = getTokenCountFromUsage(finalUsage)
   const totalToolUseCount = countToolUses(agentMessages)
 
   logEvent('tengu_agent_tool_completed', {
@@ -353,7 +379,7 @@ export function finalizeAgentTool(
     totalDurationMs: Date.now() - startTime,
     totalTokens,
     totalToolUseCount,
-    usage: lastAssistantMessage.message.usage,
+    usage: finalUsage,
   }
 }
 
