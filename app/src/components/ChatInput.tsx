@@ -6,6 +6,7 @@ import type { ImageAttachment } from '../types/bridge'
 type ModelEntry = { value: string; label: string; provider: string }
 
 const OPENROUTER_MODELS: ModelEntry[] = [
+  { value: 'anthropic/claude-opus-4.7', label: 'Claude Opus 4.7', provider: 'Anthropic' },
   { value: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6', provider: 'Anthropic' },
   { value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', provider: 'Anthropic' },
   { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5', provider: 'Anthropic' },
@@ -13,6 +14,7 @@ const OPENROUTER_MODELS: ModelEntry[] = [
 ]
 
 const ANTHROPIC_MODELS: ModelEntry[] = [
+  { value: 'claude-opus-4-7', label: 'Claude Opus 4.7', provider: 'Anthropic' },
   { value: 'claude-opus-4-6-20260204', label: 'Claude Opus 4.6', provider: 'Anthropic' },
   { value: 'claude-sonnet-4-6-20260217', label: 'Claude Sonnet 4.6', provider: 'Anthropic' },
   { value: 'claude-opus-4-5-20251124', label: 'Claude Opus 4.5', provider: 'Anthropic' },

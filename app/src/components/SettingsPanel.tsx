@@ -20,6 +20,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     keyPlaceholder: 'sk-ant-...',
     keyHint: 'Get your key at console.anthropic.com',
     models: [
+      { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
       { value: 'claude-opus-4-6-20260204', label: 'Claude Opus 4.6' },
       { value: 'claude-sonnet-4-6-20260217', label: 'Claude Sonnet 4.6' },
       { value: 'claude-opus-4-5-20251124', label: 'Claude Opus 4.5' },
@@ -33,6 +34,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     keyPlaceholder: 'sk-or-v1-...',
     keyHint: 'Get your key at openrouter.ai/keys',
     models: [
+      { value: 'anthropic/claude-opus-4.7', label: 'Claude Opus 4.7' },
       { value: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6' },
       { value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
       { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5' },
@@ -46,6 +48,7 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     keyPlaceholder: 'your-api-key',
     keyHint: 'Any Anthropic Messages API compatible endpoint (LiteLLM, etc.)',
     models: [
+      { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
       { value: 'claude-opus-4-6-20260204', label: 'Claude Opus 4.6' },
       { value: 'claude-sonnet-4-6-20260217', label: 'Claude Sonnet 4.6' },
       { value: 'claude-opus-4-5-20251124', label: 'Claude Opus 4.5' },

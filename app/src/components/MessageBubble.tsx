@@ -71,22 +71,24 @@ function UserMessage({ message }: { message: ChatMessage }) {
           </div>
         )}
         {message.content && (
-          <div className="relative">
-            <div
-              ref={contentRef}
-              className="rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm whitespace-pre-wrap break-words leading-relaxed overflow-hidden transition-[max-height] duration-300 ease-in-out"
-              style={{
-                background: 'var(--user-bubble)',
-                color: 'var(--user-bubble-fg)',
-                maxHeight: overflows && !expanded ? `${COLLAPSE_HEIGHT}px` : undefined,
-              }}
-            >
-              {message.content}
+          <div>
+            <div className="relative overflow-hidden rounded-2xl rounded-tr-sm">
+              <div
+                ref={contentRef}
+                className="px-4 py-2.5 text-sm whitespace-pre-wrap break-words leading-relaxed overflow-hidden transition-[max-height] duration-300 ease-in-out"
+                style={{
+                  background: 'var(--user-bubble)',
+                  color: 'var(--user-bubble-fg)',
+                  maxHeight: overflows && !expanded ? `${COLLAPSE_HEIGHT}px` : undefined,
+                }}
+              >
+                {message.content}
+              </div>
+              {overflows && !expanded && (
+                <div className="absolute bottom-0 left-0 right-0 h-16 rounded-b-2xl pointer-events-none"
+                  style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
+              )}
             </div>
-            {overflows && !expanded && (
-              <div className="absolute bottom-0 left-0 right-0 h-16 rounded-b-2xl pointer-events-none"
-                style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
-            )}
             {overflows && (
               <button onClick={() => {
                 const willExpand = !expanded
