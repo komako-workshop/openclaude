@@ -8,6 +8,7 @@ import { Sidebar } from './components/Sidebar'
 import MessageBubble from './components/MessageBubble'
 import { ChatInput } from './components/ChatInput'
 import { SettingsPanel } from './components/SettingsPanel'
+import { resolveAppAssetUrl } from './utils/assetUrl'
 import type {
   AgentDonePayload,
   AgentErrorPayload,
@@ -16,6 +17,8 @@ import type {
   ImageAttachment,
 } from './types/bridge'
 import type { PersistedChatState } from './stores/chatStore'
+
+const STARTUP_LOGO_SRC = resolveAppAssetUrl('icon.png')
 
 type ScrollSnapshot = {
   scrollTop: number
@@ -431,7 +434,7 @@ export default function App() {
           <ConversationContent className="mx-auto w-full max-w-[720px] px-5 py-4">
             {messages.length === 0 && !isActiveStreaming && (
               <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-6">
-                <img src="/icon.png" alt="OpenClaude" className="w-12 h-12 rounded-xl mb-4" />
+                <img src={STARTUP_LOGO_SRC} alt="OpenClaude" className="w-12 h-12 rounded-xl mb-4" />
                 <h1 className="text-lg font-semibold text-foreground mb-1">OpenClaude</h1>
                 <p className="text-[13px] text-muted-foreground max-w-xs">Ask anything. Read files, write code, run commands.</p>
                 {needsSetup && (
