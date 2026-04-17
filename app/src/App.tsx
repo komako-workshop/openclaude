@@ -148,6 +148,82 @@ export default function App() {
     streamStatesRef.current.delete(conversationId)
   }, [])
 
+  // Streaming deltas arrive faster than the UI can re-render — each token
+  // otherwise triggers a full Markdown re-parse, shiki highlight pass, and a
+  // re-render of the whole conversation list. Coalesce deltas per conversation
+  // into at most one state update per animation frame so the main thread stays
+  // responsive during fast model output (Opus 4.7 etc.).
+  const streamBuffersRef = useRef(
+    new Map<string, { text: string; thinking: string; rafId: number | null }>(),
+  )
+
+  const getStreamBuffer = useCallback((conversationId: string) => {
+    let buffer = streamBuffersRef.current.get(conversationId)
+    if (!buffer) {
+      buffer = { text: '', thinking: '', rafId: null }
+      streamBuffersRef.current.set(conversationId, buffer)
+    }
+    return buffer
+  }, [])
+
+  const flushStreamBuffer = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return
+    const buffer = streamBuffersRef.current.get(conversationId)
+    if (!buffer) return
+    if (buffer.rafId != null) {
+      window.cancelAnimationFrame(buffer.rafId)
+      buffer.rafId = null
+    }
+    if (buffer.text) {
+      const pending = buffer.text
+      buffer.text = ''
+      appendToLastAssistant(pending, conversationId)
+    }
+    if (buffer.thinking) {
+      const pending = buffer.thinking
+      buffer.thinking = ''
+      appendThinking(pending, conversationId)
+    }
+  }, [appendToLastAssistant, appendThinking])
+
+  const scheduleStreamFlush = useCallback((conversationId: string) => {
+    const buffer = getStreamBuffer(conversationId)
+    if (buffer.rafId != null) return
+    buffer.rafId = window.requestAnimationFrame(() => {
+      flushStreamBuffer(conversationId)
+    })
+  }, [flushStreamBuffer, getStreamBuffer])
+
+  const queueAssistantText = useCallback((text: string, conversationId?: string | null) => {
+    if (!conversationId) {
+      appendToLastAssistant(text, undefined)
+      return
+    }
+    const buffer = getStreamBuffer(conversationId)
+    buffer.text += text
+    scheduleStreamFlush(conversationId)
+  }, [appendToLastAssistant, getStreamBuffer, scheduleStreamFlush])
+
+  const queueAssistantThinking = useCallback((text: string, conversationId?: string | null) => {
+    if (!conversationId) {
+      appendThinking(text, undefined)
+      return
+    }
+    const buffer = getStreamBuffer(conversationId)
+    buffer.thinking += text
+    scheduleStreamFlush(conversationId)
+  }, [appendThinking, getStreamBuffer, scheduleStreamFlush])
+
+  const clearStreamBuffer = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return
+    const buffer = streamBuffersRef.current.get(conversationId)
+    if (!buffer) return
+    if (buffer.rafId != null) {
+      window.cancelAnimationFrame(buffer.rafId)
+    }
+    streamBuffersRef.current.delete(conversationId)
+  }, [])
+
   useEffect(() => {
     const offEvent = window.openclaude.on('agent:event', (payload: AgentEventPayload) => {
       const targetConversationId = payload.conversationId
@@ -157,6 +233,7 @@ export default function App() {
         const se = (event as AgentEvent & { event?: Record<string, unknown> }).event as any
         if (!se) return
         if (se.type === 'message_start') {
+          flushStreamBuffer(targetConversationId)
           resetStreamState(targetConversationId)
           beginAssistantTurn(targetConversationId ?? undefined)
           return
@@ -165,14 +242,17 @@ export default function App() {
           ensureAssistantPlaceholder(targetConversationId ?? undefined)
           if (se.delta.type === 'text_delta' && se.delta.text) {
             streamState.streamedText = true
-            appendToLastAssistant(se.delta.text, targetConversationId ?? undefined)
+            queueAssistantText(se.delta.text, targetConversationId)
           }
           else if (se.delta.type === 'thinking_delta' && se.delta.thinking) {
             streamState.streamedThinking = true
-            appendThinking(se.delta.thinking, targetConversationId ?? undefined)
+            queueAssistantThinking(se.delta.thinking, targetConversationId)
           }
         } else if (se.type === 'content_block_start' && se.content_block?.type === 'tool_use') {
           ensureAssistantPlaceholder(targetConversationId ?? undefined)
+          // Flush any pending text before a tool call so visual ordering matches
+          // the stream ordering (text → tool_use, not tool_use → text).
+          flushStreamBuffer(targetConversationId)
           streamState.streamedToolCallIds.add(se.content_block.id)
           addToolCall({
             id: se.content_block.id,
@@ -188,6 +268,10 @@ export default function App() {
         const msg = event.message
         if (!msg?.content) return
         ensureAssistantPlaceholder(targetConversationId ?? undefined)
+        // Drain the streaming buffer first; the aggregated `assistant` event
+        // is the authoritative turn snapshot and may be followed by tool
+        // results that must render after the text.
+        flushStreamBuffer(targetConversationId)
         for (const block of msg.content) {
           if (block.type === 'text' && !streamState.streamedText) {
             appendToLastAssistant(block.text, targetConversationId ?? undefined)
@@ -216,6 +300,7 @@ export default function App() {
       if (event.type === 'user') {
         const msg = event.message
         if (!msg?.content) return
+        flushStreamBuffer(targetConversationId)
         for (const block of msg.content) {
           if (block.type !== 'tool_result') continue
           updateToolCall(block.tool_use_id, {
@@ -231,16 +316,28 @@ export default function App() {
     })
     const offDone = window.openclaude.on('agent:done', (payload: AgentDonePayload) => {
       const targetConversationId = payload.conversationId
+      flushStreamBuffer(targetConversationId)
+      clearStreamBuffer(targetConversationId)
       finishStreaming(targetConversationId ?? undefined)
       clearStreamState(targetConversationId)
     })
     const offError = window.openclaude.on('agent:error', (payload: AgentErrorPayload) => {
       const targetConversationId = payload.conversationId
+      flushStreamBuffer(targetConversationId)
+      clearStreamBuffer(targetConversationId)
       addMessage({ role: 'assistant', content: payload.error, isError: true }, targetConversationId ?? undefined)
       finishStreaming(targetConversationId ?? undefined)
       clearStreamState(targetConversationId)
     })
-    return () => { offEvent(); offDone(); offError() }
+    return () => {
+      offEvent()
+      offDone()
+      offError()
+      for (const id of Array.from(streamBuffersRef.current.keys())) {
+        flushStreamBuffer(id)
+        clearStreamBuffer(id)
+      }
+    }
   }, [
     addMessage,
     appendToLastAssistant,
@@ -248,10 +345,14 @@ export default function App() {
     addToolCall,
     updateToolCall,
     beginAssistantTurn,
+    clearStreamBuffer,
     clearStreamState,
     ensureAssistantPlaceholder,
     finishStreaming,
+    flushStreamBuffer,
     getStreamState,
+    queueAssistantText,
+    queueAssistantThinking,
     resetStreamState,
   ])
 
@@ -445,7 +546,14 @@ export default function App() {
               </div>
             )}
             <div className="space-y-0">
-              {messages.map((msg) => <MessageBubble key={msg.id} message={msg} isStreaming={isActiveStreaming} />)}
+              {messages.map((msg, index) => (
+                <MessageBubble
+                  key={msg.id}
+                  message={msg}
+                  previousRole={index > 0 ? messages[index - 1].role : undefined}
+                  isStreaming={isActiveStreaming}
+                />
+              ))}
             </div>
           </ConversationContent>
           <ConversationScrollButton />
