@@ -12,7 +12,11 @@ import {
 } from 'lucide-react'
 import type { ChatMessage, ToolCallInfo } from '../stores/chatStore'
 
-interface Props { message: ChatMessage; isStreaming?: boolean }
+interface Props {
+  message: ChatMessage
+  previousRole?: ChatMessage['role']
+  isStreaming?: boolean
+}
 
 const rawCodePlugin = createCodePlugin()
 const safeCodePlugin = {
@@ -32,14 +36,20 @@ const CONTEXT_TOOLS = new Set([
   'websearch', 'web_search', 'ls', 'list', 'list_files',
 ])
 
-export default function MessageBubble({ message }: Props) {
-  if (message.role === 'user') return <UserMessage message={message} />
+export default function MessageBubble({ message, previousRole }: Props) {
+  if (message.role === 'user') return <UserMessage message={message} previousRole={previousRole} />
   return <AssistantMessage message={message} />
 }
 
 // ── User message ─────────────────────────────────────────────────────
 
-function UserMessage({ message }: { message: ChatMessage }) {
+function UserMessage({
+  message,
+  previousRole: _previousRole,
+}: {
+  message: ChatMessage
+  previousRole?: ChatMessage['role']
+}) {
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
   const contentRef = useRef<HTMLDivElement>(null)
