@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { Streamdown } from 'streamdown'
 import { useConversationScroll as useStickToBottomContext } from './Conversation'
 import { cjk } from '@streamdown/cjk'
@@ -57,10 +57,17 @@ function getVisibleToolCalls(toolCalls?: ToolCallInfo[]) {
   return (toolCalls ?? []).filter((toolCall) => !isSendUserMessageTool(toolCall.toolName))
 }
 
-export default function MessageBubble({ message, previousRole }: Props) {
+function MessageBubble({ message, previousRole }: Props) {
   if (message.role === 'user') return <UserMessage message={message} previousRole={previousRole} />
   return <AssistantMessage message={message} />
 }
+
+// Memoised so streaming token updates only re-render the one message whose
+// reference actually changed. Without this, appending a single token forces
+// Streamdown to re-parse the markdown (and re-run shiki highlighting) for
+// every bubble in the conversation every animation frame, which is what made
+// the whole view feel locked up during long replies.
+export default memo(MessageBubble)
 
 // ── User message ─────────────────────────────────────────────────────
 
