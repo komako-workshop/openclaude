@@ -35,6 +35,27 @@ const CONTEXT_TOOLS = new Set([
   'glob', 'grep', 'search', 'search_files', 'find_files',
   'websearch', 'web_search', 'ls', 'list', 'list_files',
 ])
+const SEND_USER_MESSAGE_TOOL = 'sendusermessage'
+
+function isSendUserMessageTool(toolName: string) {
+  return toolName.toLowerCase() === SEND_USER_MESSAGE_TOOL
+}
+
+function getSendUserMessageText(toolCalls?: ToolCallInfo[]) {
+  if (!toolCalls?.length) return ''
+  return toolCalls
+    .filter((toolCall) => isSendUserMessageTool(toolCall.toolName))
+    .map((toolCall) => {
+      const message = toolCall.args?.message
+      return typeof message === 'string' ? message.trim() : ''
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function getVisibleToolCalls(toolCalls?: ToolCallInfo[]) {
+  return (toolCalls ?? []).filter((toolCall) => !isSendUserMessageTool(toolCall.toolName))
+}
 
 export default function MessageBubble({ message, previousRole }: Props) {
   if (message.role === 'user') return <UserMessage message={message} previousRole={previousRole} />
@@ -45,7 +66,7 @@ export default function MessageBubble({ message, previousRole }: Props) {
 
 function UserMessage({
   message,
-  previousRole: _previousRole,
+  previousRole,
 }: {
   message: ChatMessage
   previousRole?: ChatMessage['role']
@@ -64,53 +85,70 @@ function UserMessage({
     })
   }, [message.content])
 
+  const imageCount = message.images?.length ?? 0
+  const spacingClass = previousRole === 'user' ? 'mt-8 mb-5' : 'mt-6 mb-5'
+
   return (
-    <div className="flex justify-end mt-6 mb-2">
-      <div className="max-w-[85%]">
-        {hasImages && (
-          <div className="flex flex-wrap gap-1.5 justify-end mb-1.5">
-            {message.images!.map((img, i) => (
-              <img
-                key={i}
-                src={`data:${img.mediaType};base64,${img.base64}`}
-                alt=""
-                className="rounded-2xl rounded-tr-sm object-cover cursor-pointer max-h-64 max-w-full shadow-sm"
-                onDoubleClick={() => window.openclaude.invoke('image:preview', img.base64, img.mediaType)}
-              />
-            ))}
-          </div>
-        )}
-        {message.content && (
-          <div>
-            <div className="relative overflow-hidden rounded-2xl rounded-tr-sm">
+    <div className={`flex justify-end ${spacingClass}`}>
+      <div className="max-w-[95%] ml-auto">
+        <div
+          className="rounded-lg overflow-hidden"
+          style={{ background: 'var(--user-bubble)', color: 'var(--user-bubble-fg)' }}
+        >
+          {hasImages && (
+            <div className="flex flex-col gap-1 p-1.5">
+              {imageCount === 1 ? (
+                <img
+                  src={`data:${message.images![0].mediaType};base64,${message.images![0].base64}`}
+                  alt=""
+                  className="rounded-md max-h-80 max-w-full object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                  onDoubleClick={() => window.openclaude.invoke('image:preview', message.images![0].base64, message.images![0].mediaType)}
+                />
+              ) : (
+                <div className="grid grid-cols-2 gap-1">
+                  {message.images!.map((img, i) => (
+                    <img
+                      key={i}
+                      src={`data:${img.mediaType};base64,${img.base64}`}
+                      alt=""
+                      className="rounded-md w-full h-36 object-contain cursor-pointer hover:opacity-80 transition-opacity"
+                      style={{ background: 'rgba(0,0,0,0.03)' }}
+                      onDoubleClick={() => window.openclaude.invoke('image:preview', img.base64, img.mediaType)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {message.content && (
+            <div className="relative overflow-hidden rounded-lg">
               <div
                 ref={contentRef}
-                className="px-4 py-2.5 text-sm whitespace-pre-wrap break-words leading-relaxed overflow-hidden transition-[max-height] duration-300 ease-in-out"
+                className="px-4 py-3 text-sm whitespace-pre-wrap break-words leading-relaxed overflow-hidden transition-[max-height] duration-300 ease-in-out"
                 style={{
-                  background: 'var(--user-bubble)',
-                  color: 'var(--user-bubble-fg)',
                   maxHeight: overflows && !expanded ? `${COLLAPSE_HEIGHT}px` : undefined,
                 }}
               >
                 {message.content}
               </div>
               {overflows && !expanded && (
-                <div className="absolute bottom-0 left-0 right-0 h-16 rounded-b-2xl pointer-events-none"
+                <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none"
                   style={{ background: `linear-gradient(to top, var(--user-bubble), transparent)` }} />
               )}
             </div>
-            {overflows && (
-              <button onClick={() => {
-                const willExpand = !expanded
-                setExpanded(willExpand)
-                if (willExpand) stopScroll()
-              }}
-                className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
-                {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                <span>{expanded ? '收起' : '展开'}</span>
-              </button>
-            )}
-          </div>
+          )}
+        </div>
+        {/* Keep the collapse control outside the fade/clip container. */}
+        {overflows && (
+          <button onClick={() => {
+            const willExpand = !expanded
+            setExpanded(willExpand)
+            if (willExpand) stopScroll()
+          }}
+            className="flex items-center gap-1 mt-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+            {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            <span>{expanded ? '收起' : '展开'}</span>
+          </button>
         )}
       </div>
     </div>
@@ -120,9 +158,12 @@ function UserMessage({
 // ── Assistant message ────────────────────────────────────────────────
 
 function AssistantMessage({ message }: { message: ChatMessage }) {
+  const sendUserMessageText = useMemo(() => getSendUserMessageText(message.toolCalls), [message.toolCalls])
+  const visibleToolCalls = useMemo(() => getVisibleToolCalls(message.toolCalls), [message.toolCalls])
+  const displayContent = sendUserMessageText || message.content
   const hasThinking = Boolean(message.thinkingContent?.trim())
-  const hasTools = Boolean(message.toolCalls?.length)
-  const bufferedContent = useBufferedContent(message.content, Boolean(message.isStreaming))
+  const hasTools = visibleToolCalls.length > 0
+  const bufferedContent = useBufferedContent(displayContent, Boolean(message.isStreaming))
 
   if (message.isError) {
     return (
@@ -133,11 +174,13 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
     )
   }
 
+  if (!message.isStreaming && !displayContent && !hasThinking && !hasTools) return null
+
   return (
     <div className="group mt-5 mb-3">
       {(hasThinking || hasTools) && (
         <ToolActionsGroup
-          toolCalls={message.toolCalls ?? []}
+          toolCalls={visibleToolCalls}
           thinkingContent={message.thinkingContent}
           isStreaming={Boolean(message.isStreaming)}
         />
@@ -151,7 +194,7 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
             {message.isStreaming && <StreamingCursor />}
           </div>
           <div className="absolute -top-1 right-0 opacity-0 group-hover:opacity-100 transition-opacity">
-            <CopyButton text={message.content} />
+            <CopyButton text={displayContent} />
           </div>
         </div>
       )}
@@ -163,11 +206,11 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
 
       {/* Streaming status bar */}
       {message.isStreaming && hasTools && (
-        <StreamingStatusBar toolCalls={message.toolCalls!} />
+        <StreamingStatusBar toolCalls={visibleToolCalls} />
       )}
 
       {/* Timestamp on hover */}
-      {!message.isStreaming && message.content && (
+      {!message.isStreaming && displayContent && (
         <div className="mt-1 opacity-0 group-hover:opacity-100 transition-opacity text-[11px] text-muted-foreground">
           {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </div>

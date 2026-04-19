@@ -8,6 +8,7 @@ type ModelEntry = { value: string; label: string; provider: string }
 const OPENROUTER_MODELS: ModelEntry[] = [
   { value: 'anthropic/claude-opus-4.7', label: 'Claude Opus 4.7', provider: 'Anthropic' },
   { value: 'anthropic/claude-opus-4.6', label: 'Claude Opus 4.6', provider: 'Anthropic' },
+  { value: 'anthropic/claude-opus-4.6-fast', label: 'Claude Opus 4.6 Fast', provider: 'Anthropic' },
   { value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', provider: 'Anthropic' },
   { value: 'anthropic/claude-opus-4.5', label: 'Claude Opus 4.5', provider: 'Anthropic' },
   { value: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5', provider: 'Anthropic' },
@@ -32,6 +33,8 @@ type AttachedFile = { name: string; path: string }
 type AttachedImageLocal = ImageAttachment & { previewUrl: string }
 
 const IMAGE_MIME_RE = /^image\/(png|jpe?g|gif|webp)$/
+const MAX_IMAGE_DIMENSION = 1568
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
 function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -42,14 +45,52 @@ function readFileAsDataURL(file: File): Promise<string> {
   })
 }
 
+function resizeImageIfNeeded(dataUrl: string): Promise<{ base64: string; mediaType: string }> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      const { naturalWidth: w, naturalHeight: h } = img
+      const rawBase64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+      const rawBytes = Math.ceil(rawBase64.length * 3 / 4)
+
+      if (w <= MAX_IMAGE_DIMENSION && h <= MAX_IMAGE_DIMENSION && rawBytes <= MAX_IMAGE_BYTES) {
+        resolve({ base64: rawBase64, mediaType: 'image/png' })
+        return
+      }
+
+      const scale = Math.min(MAX_IMAGE_DIMENSION / w, MAX_IMAGE_DIMENSION / h, 1)
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(w * scale)
+      canvas.height = Math.round(h * scale)
+      const ctx = canvas.getContext('2d')!
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+
+      let quality = 0.85
+      let result = canvas.toDataURL('image/jpeg', quality)
+      while (Math.ceil(result.length * 3 / 4) > MAX_IMAGE_BYTES && quality > 0.3) {
+        quality -= 0.1
+        result = canvas.toDataURL('image/jpeg', quality)
+      }
+
+      const base64 = result.includes(',') ? result.split(',')[1] : result
+      resolve({ base64, mediaType: 'image/jpeg' })
+    }
+    img.onerror = () => {
+      const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+      resolve({ base64, mediaType: 'image/png' })
+    }
+    img.src = dataUrl
+  })
+}
+
 async function fileToAttachedImage(file: File): Promise<AttachedImageLocal | null> {
   if (!IMAGE_MIME_RE.test(file.type)) return null
   const dataUrl = await readFileAsDataURL(file)
-  const base64 = dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+  const { base64, mediaType } = await resizeImageIfNeeded(dataUrl)
   return {
     name: file.name || 'image.png',
     base64,
-    mediaType: file.type || 'image/png',
+    mediaType,
     previewUrl: URL.createObjectURL(file),
   }
 }
@@ -192,7 +233,7 @@ export function ChatInput({ onSend, onAbort, isStreaming }: Props) {
   }, [])
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit() }
   }
 
   const handleSelect = useCallback((value: string) => {
