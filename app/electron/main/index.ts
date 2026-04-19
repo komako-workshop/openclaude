@@ -2,6 +2,10 @@ import { app, BrowserWindow, ipcMain, dialog, shell, nativeImage } from 'electro
 import { dirname, join } from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import {
+  buildAgentFingerprint,
+  getAgentFingerprintCompatibility,
+} from './agentSessionFingerprint.js'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -22,7 +26,6 @@ const agentRuntimes = new Map<string, AgentRuntime>()
 const activeAbortControllers = new Map<string, AbortController>()
 const deletedConversationIds = new Set<string>()
 const AGENT_SESSION_VERSION = 1
-const AGENT_PROMPT_FINGERPRINT_VERSION = 1
 
 function buildSettingsKey(s: Settings): string {
   return `${s.model}|${s.apiKey}|${s.baseURL}|${s.cwd}|${s.permissionMode}`
@@ -80,6 +83,27 @@ const DEFAULT_SETTINGS: Settings = {
   permissionMode: 'bypassPermissions',
 }
 
+const BASE_APPEND_SYSTEM_PROMPT =
+  'Do not use EnterPlanMode or ExitPlanMode tools. This client does not support plan mode. Always work in normal code mode and respond directly.'
+
+function isFirstPartyAnthropicBaseURL(baseURL: string): boolean {
+  return baseURL.includes('api.anthropic.com')
+}
+
+function buildAppendSystemPrompt(settings: Settings): string {
+  if (isFirstPartyAnthropicBaseURL(settings.baseURL)) {
+    return BASE_APPEND_SYSTEM_PROMPT
+  }
+
+  return [
+    BASE_APPEND_SYSTEM_PROMPT,
+    'IMPORTANT: On some third-party Anthropic-compatible APIs, very large Write tool payloads can be truncated and come back with empty inputs.',
+    'When creating or rewriting a large file, do not put the entire file contents into one huge Write call.',
+    'Safer strategies: write a small scaffold first and then use Edit in smaller chunks; or use compact Bash/Python code to generate repetitive sections instead of pasting the full file into a tool argument.',
+    'If a Write call fails with missing file_path/content, treat it as provider truncation. Retry with a smaller strategy, not the same large Write again.',
+  ].join(' ')
+}
+
 function readJSONFile<T>(paths: string[]): T | null {
   for (const filePath of paths) {
     try {
@@ -133,16 +157,6 @@ function saveChatState(state: PersistedChatState) {
   writeJSONFile(CHAT_STATE_PATH, state)
 }
 
-function buildAgentFingerprint(settings: Settings): string {
-  return [
-    AGENT_PROMPT_FINGERPRINT_VERSION,
-    settings.model,
-    settings.baseURL,
-    settings.cwd,
-    settings.permissionMode,
-  ].join('|')
-}
-
 function getAgentStatePath(conversationId: string): string {
   return join(AGENT_STATE_DIR, `${conversationId}.json`)
 }
@@ -167,11 +181,16 @@ function loadAgentMessages(conversationId: string, settings: Settings): unknown[
     return null
   }
 
-  const fingerprint = buildAgentFingerprint(settings)
-  if (persisted.fingerprint !== fingerprint) {
+  const fingerprintCompatibility = getAgentFingerprintCompatibility(
+    persisted.fingerprint,
+    settings,
+  )
+  if (!fingerprintCompatibility.matches) {
     logAgentSession('restore-skipped', {
       conversationId,
       reason: 'fingerprint_mismatch',
+      fingerprintReason: fingerprintCompatibility.reason,
+      fingerprintVersion: fingerprintCompatibility.fingerprintVersion,
       updatedAt: persisted.updatedAt,
     })
     return null
@@ -188,7 +207,11 @@ function loadAgentMessages(conversationId: string, settings: Settings): unknown[
 
   logAgentSession('restored', {
     conversationId,
+    fingerprintVersion: fingerprintCompatibility.fingerprintVersion,
     messageCount: persisted.messages.length,
+    restoredAfterModelSwitch:
+      fingerprintCompatibility.savedModel !== null
+      && fingerprintCompatibility.savedModel !== settings.model,
     updatedAt: persisted.updatedAt,
     sessionFile: statePath,
   })
@@ -336,6 +359,7 @@ async function getOrCreateAgent(settings: Settings, conversationId?: string): Pr
     includePartialMessages: true,
     initialMessages: restoredMessages ?? undefined,
     ...(mcpServers && { mcpServers }),
+    appendSystemPrompt: buildAppendSystemPrompt(settings),
   })
   agentRuntimes.set(agentKey, {
     agent,
@@ -506,6 +530,9 @@ function registerIPC() {
     try {
       await runAgentQuery(prompt, settings, conversationId, images)
     } catch (err: any) {
+      if (conversationId) {
+        disposeConversationRuntime(conversationId)
+      }
       mainWindow?.webContents.send('agent:error', {
         conversationId: conversationId ?? null,
         error: err.message ?? String(err),

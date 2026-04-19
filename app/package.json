@@ -7,16 +7,18 @@
   "scripts": {
     "patch:sdk": "node scripts/patch-open-agent-sdk.mjs",
     "smoke:isolation": "npm run patch:sdk && node scripts/isolation-regression-smoke.mjs",
+    "smoke:model-switch-e2e": "npm run build && node scripts/model-switch-e2e-smoke.mjs",
+    "smoke:model-switch": "npm run build && node scripts/model-switch-fingerprint-smoke.mjs",
     "smoke:resume": "npm run patch:sdk && node scripts/resume-smoke-test.mjs",
     "smoke:scroll": "npm run patch:sdk && node scripts/scroll-regression-smoke.mjs",
-    "smoke:package": "node scripts/package-smoke.mjs",
     "dev": "npm run patch:sdk && vite",
     "build": "npm run patch:sdk && tsc && vite build",
     "preview": "vite preview",
     "typecheck": "npm run patch:sdk && tsc --noEmit",
     "package": "npm run package:mac",
     "package:mac": "bash scripts/build-release.sh",
-    "package:mac:builder": "npm run build && node --max-old-space-size=8192 ./node_modules/.bin/electron-builder --mac"
+    "package:mac:builder": "npm run build && node --max-old-space-size=8192 ./node_modules/.bin/electron-builder --mac",
+    "smoke:package": "node scripts/package-smoke.mjs"
   },
   "dependencies": {
     "@shipany/open-agent-sdk": "^0.1.7",
