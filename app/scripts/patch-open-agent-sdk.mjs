@@ -408,6 +408,16 @@ for (const { file, replacements } of patches) {
   let after = before
 
   for (const { from, to } of replacements) {
+    // Idempotency guard: several patches here use a `to` string that contains
+    // the full `from` as a substring (we're prepending new code around an
+    // existing block). That means after a successful patch, `from` still
+    // matches the file, so a second run would append the new code *again* —
+    // the root cause of the "Identifier 'getLastAgentUsage' has already been
+    // declared" build failure people hit when `patch:sdk` ran more than once
+    // on the same `node_modules`. Skip the replacement if the post-patch
+    // content is already present.
+    if (after.includes(to)) continue
+    if (!after.includes(from)) continue
     after = after.replace(from, to)
   }
 

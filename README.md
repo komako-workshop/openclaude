@@ -21,11 +21,18 @@ Claude Code 在国内疯狂封号，很多人用不了。这个客户端接 Open
 ```bash
 git clone https://github.com/komako-workshop/openclaude.git
 cd openclaude/app
-npm install
-npm run dev
+bash scripts/setup.sh        # 安装依赖 + 下载匹配的 Electron 二进制
+npm run dev                  # 开发模式
+# 或
+npm run package:mac          # 打包 .app + .dmg（ad-hoc 签名）
 ```
 
 需要 Node.js 18+。
+
+> 注意：请使用 `bash scripts/setup.sh` 而不是直接 `npm install`。上游
+> `@shipany/open-agent-sdk@0.1.7` 的 postinstall 在 npm 发布包里漏带
+> 了一个脚本文件，`npm install` 会在那步失败。`setup.sh` 会跳过那个有
+> 问题的 postinstall，并把 Electron 二进制正确装好。
 
 ## 使用
 
