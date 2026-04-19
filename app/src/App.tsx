@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
-import type { StickToBottomContext } from 'use-stick-to-bottom'
 import { LEGACY_CHAT_STORAGE_KEY, useChatStore } from './stores/chatStore'
 import { useSettingsStore } from './stores/settingsStore'
-import { Conversation, ConversationContent, ConversationScrollButton } from './components/Conversation'
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+  type ConversationScrollContext,
+} from './components/Conversation'
 import { Sidebar } from './components/Sidebar'
 import MessageBubble from './components/MessageBubble'
 import { ChatInput } from './components/ChatInput'
@@ -60,7 +64,7 @@ export default function App() {
   } = useChatStore()
 
   const { loaded, showPanel, load: loadSettings, togglePanel, settings } = useSettingsStore()
-  const conversationContextRef = useRef<StickToBottomContext | null>(null)
+  const conversationContextRef = useRef<ConversationScrollContext | null>(null)
   const scrollSnapshotsRef = useRef(new Map<string, ScrollSnapshot>())
   const activeConversationRef = useRef<string | null>(null)
   const messageCountRef = useRef(0)

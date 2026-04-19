@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { Streamdown } from 'streamdown'
-import { useStickToBottomContext } from 'use-stick-to-bottom'
+import { useConversationScroll as useStickToBottomContext } from './Conversation'
 import { cjk } from '@streamdown/cjk'
 import { createCodePlugin } from '@streamdown/code'
 import { math } from '@streamdown/math'
