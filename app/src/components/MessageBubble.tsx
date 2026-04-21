@@ -1,4 +1,13 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from 'react'
 import { Streamdown } from 'streamdown'
 import { useConversationScroll as useStickToBottomContext } from './Conversation'
 import { cjk } from '@streamdown/cjk'
@@ -27,6 +36,13 @@ const safeCodePlugin = {
   },
 }
 const streamdownPlugins = { cjk, code: safeCodePlugin, math, mermaid }
+// Hoisted out of MarkdownRenderer so every render sends Streamdown the same
+// object reference. Without this, Streamdown's internal `memo` compares
+// `components` by identity, sees a new object every token, and re-runs
+// parseMarkdownIntoBlocks + shiki highlighting for every block each frame —
+// which is what was pinning the main thread during streaming and making the
+// viewport feel locked (scroll events couldn't find a free frame to dispatch).
+const STREAMDOWN_COMPONENTS = { a: MarkdownLink }
 const COLLAPSE_HEIGHT = 300
 const BUFFER_WORD_THRESHOLD = 40
 const BUFFER_MAX_MS = 2500
@@ -581,6 +597,15 @@ function MarkdownRenderer({
   isStreaming: boolean
   className?: string
 }) {
+  // Render Streamdown against a deferred snapshot of the streaming text so
+  // React can commit a cheap "same text as last frame" pass first and schedule
+  // the expensive re-parse (remark/rehype + shiki + any mermaid) at a lower
+  // priority. That's what lets wheel/scroll events actually dispatch between
+  // tokens instead of starving behind a long render during Opus 4.7's faster
+  // streams. When streaming is done we pass the text through directly so the
+  // final rendered message never visibly lags the content.
+  const deferredText = useDeferredValue(text)
+  const rendered = isStreaming ? deferredText : text
   return (
     <Streamdown
       mode={isStreaming ? 'streaming' : 'static'}
@@ -588,9 +613,9 @@ function MarkdownRenderer({
       controls={false}
       animated={false}
       className={className}
-      components={{ a: MarkdownLink }}
+      components={STREAMDOWN_COMPONENTS}
     >
-      {text}
+      {rendered}
     </Streamdown>
   )
 }

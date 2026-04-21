@@ -24,6 +24,13 @@ import type { PersistedChatState } from './stores/chatStore'
 
 const STARTUP_LOGO_SRC = resolveAppAssetUrl('icon.png')
 
+// Minimum time between streaming UI flushes. rAF (~16ms) was too tight —
+// Streamdown's per-render work for long replies left no time for wheel /
+// scroll events to dispatch, and the viewport visibly locked during Opus 4.7
+// streams. ~50ms (~20Hz) still feels real-time for text while giving the
+// browser enough idle budget to process input.
+const STREAM_FLUSH_INTERVAL_MS = 50
+
 type ScrollSnapshot = {
   scrollTop: number
   atBottom: boolean
@@ -155,16 +162,17 @@ export default function App() {
   // Streaming deltas arrive faster than the UI can re-render — each token
   // otherwise triggers a full Markdown re-parse, shiki highlight pass, and a
   // re-render of the whole conversation list. Coalesce deltas per conversation
-  // into at most one state update per animation frame so the main thread stays
-  // responsive during fast model output (Opus 4.7 etc.).
+  // into at most one state update per flush window (see
+  // STREAM_FLUSH_INTERVAL_MS) so the main thread stays responsive during
+  // fast model output.
   const streamBuffersRef = useRef(
-    new Map<string, { text: string; thinking: string; rafId: number | null }>(),
+    new Map<string, { text: string; thinking: string; timerId: number | null }>(),
   )
 
   const getStreamBuffer = useCallback((conversationId: string) => {
     let buffer = streamBuffersRef.current.get(conversationId)
     if (!buffer) {
-      buffer = { text: '', thinking: '', rafId: null }
+      buffer = { text: '', thinking: '', timerId: null }
       streamBuffersRef.current.set(conversationId, buffer)
     }
     return buffer
@@ -174,9 +182,9 @@ export default function App() {
     if (!conversationId) return
     const buffer = streamBuffersRef.current.get(conversationId)
     if (!buffer) return
-    if (buffer.rafId != null) {
-      window.cancelAnimationFrame(buffer.rafId)
-      buffer.rafId = null
+    if (buffer.timerId != null) {
+      window.clearTimeout(buffer.timerId)
+      buffer.timerId = null
     }
     if (buffer.text) {
       const pending = buffer.text
@@ -192,10 +200,11 @@ export default function App() {
 
   const scheduleStreamFlush = useCallback((conversationId: string) => {
     const buffer = getStreamBuffer(conversationId)
-    if (buffer.rafId != null) return
-    buffer.rafId = window.requestAnimationFrame(() => {
+    if (buffer.timerId != null) return
+    buffer.timerId = window.setTimeout(() => {
+      buffer.timerId = null
       flushStreamBuffer(conversationId)
-    })
+    }, STREAM_FLUSH_INTERVAL_MS)
   }, [flushStreamBuffer, getStreamBuffer])
 
   const queueAssistantText = useCallback((text: string, conversationId?: string | null) => {
@@ -222,8 +231,8 @@ export default function App() {
     if (!conversationId) return
     const buffer = streamBuffersRef.current.get(conversationId)
     if (!buffer) return
-    if (buffer.rafId != null) {
-      window.cancelAnimationFrame(buffer.rafId)
+    if (buffer.timerId != null) {
+      window.clearTimeout(buffer.timerId)
     }
     streamBuffersRef.current.delete(conversationId)
   }, [])

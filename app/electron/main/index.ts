@@ -6,6 +6,7 @@ import {
   buildAgentFingerprint,
   getAgentFingerprintCompatibility,
 } from './agentSessionFingerprint.js'
+import { createRendererEventBatcher } from './streamEventBatcher.js'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -439,6 +440,14 @@ async function runAgentQuery(
 
   let eventCount = 0
   const t0 = Date.now()
+  const rendererEventBatcher = createRendererEventBatcher({
+    send: (event) => {
+      mainWindow?.webContents.send('agent:event', {
+        conversationId: conversationId ?? null,
+        event,
+      })
+    },
+  })
 
   try {
     for await (const event of agent.query(queryPrompt as any, { abortSignal: abortController.signal })) {
@@ -454,17 +463,20 @@ async function runAgentQuery(
           subtype === 'content_block_start' ? se?.content_block?.type :
           subtype === 'content_block_delta' ? se?.delta?.type :
           ''
-        console.log(`[agent] #${eventCount} +${elapsed}s stream_event/${subtype} ${detail}`)
+        const isHighFrequencyTextDelta =
+          subtype === 'content_block_delta'
+          && (detail === 'text_delta' || detail === 'thinking_delta')
+        if (!isHighFrequencyTextDelta) {
+          console.log(`[agent] #${eventCount} +${elapsed}s stream_event/${subtype} ${detail}`)
+        }
       } else {
         console.log(`[agent] #${eventCount} +${elapsed}s ${evt.type}${evt.subtype ? '/' + evt.subtype : ''}`)
       }
 
-      mainWindow?.webContents.send('agent:event', {
-        conversationId: conversationId ?? null,
-        event,
-      })
+      rendererEventBatcher.push(event)
     }
 
+    rendererEventBatcher.flush()
     const wasAborted = abortController.signal.aborted === true
     if (!wasAborted && conversationId) {
       saveAgentMessages(conversationId, settings, getAgentMessages(agent))
@@ -475,11 +487,17 @@ async function runAgentQuery(
       })
     }
 
-    console.log(`[agent] done — ${eventCount} events in ${((Date.now() - t0) / 1000).toFixed(1)}s`)
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1)
+    const { rendererEvents, batchedDeltaEvents } = rendererEventBatcher.stats
+    console.log(
+      `[agent] done — ${eventCount} upstream events, ${rendererEvents} renderer events in ${elapsed}s`
+      + (batchedDeltaEvents > 0 ? ` (batched ${batchedDeltaEvents} text/thinking deltas)` : ''),
+    )
     mainWindow?.webContents.send('agent:done', {
       conversationId: conversationId ?? null,
     })
   } finally {
+    rendererEventBatcher.flush()
     if (activeAbortControllers.get(agentKey) === abortController) {
       activeAbortControllers.delete(agentKey)
     }

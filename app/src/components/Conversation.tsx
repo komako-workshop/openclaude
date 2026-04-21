@@ -33,19 +33,35 @@ export type ConversationScrollContext = {
   scrollRef: MutableRefObject<HTMLDivElement | null>
   scrollToBottom: (opts?: ScrollToBottomOptions) => Promise<boolean>
   stopScroll: () => void
+  /**
+   * Read-through to the current "at bottom" state. Retained for the imperative
+   * contextRef API so App.tsx can still observe it without subscribing. Inside
+   * React components, prefer `useConversationIsAtBottom()` — it's the only
+   * subscriber that re-renders when the value changes.
+   */
   isAtBottom: boolean
 }
 
-type InternalContext = ConversationScrollContext & {
+// The stable half of the context: refs + callbacks that never change across
+// a conversation's lifetime. Everything that only needs to call stopScroll /
+// scrollToBottom subscribes here and therefore never re-renders when the
+// at-bottom indicator flips. That's important during streaming because every
+// tool row, every thinking panel, every expandable bubble used to re-render
+// on every sticky-state change while the user was trying to scroll.
+type StableContext = {
+  scrollRef: MutableRefObject<HTMLDivElement | null>
   contentRef: MutableRefObject<HTMLDivElement | null>
   stickyRef: MutableRefObject<boolean>
+  scrollToBottom: (opts?: ScrollToBottomOptions) => Promise<boolean>
+  stopScroll: () => void
   updateIsAtBottom: (value: boolean) => void
 }
 
-const Ctx = createContext<InternalContext | null>(null)
+const StableCtx = createContext<StableContext | null>(null)
+const IsAtBottomCtx = createContext<boolean>(true)
 
-function useInternalContext(): InternalContext {
-  const ctx = useContext(Ctx)
+function useStableContext(): StableContext {
+  const ctx = useContext(StableCtx)
   if (!ctx) {
     throw new Error(
       'Conversation context missing — did you forget to wrap in <Conversation>?',
@@ -54,16 +70,31 @@ function useInternalContext(): InternalContext {
   return ctx
 }
 
+export function useConversationIsAtBottom(): boolean {
+  return useContext(IsAtBottomCtx)
+}
+
 export function useConversationScroll(): ConversationScrollContext {
-  const ctx = useInternalContext()
+  const stable = useStableContext()
+  // Return stable references so consumers that only care about actions (every
+  // tool row, thinking row, user bubble collapse button, etc.) do NOT
+  // re-render when isAtBottom changes. Consumers that actually need the
+  // at-bottom flag should call `useConversationIsAtBottom()` instead. The
+  // field is kept on the object purely to preserve the shape for imperative
+  // callers (Ref forwarded to App.tsx).
   return useMemo(
     () => ({
-      scrollRef: ctx.scrollRef,
-      scrollToBottom: ctx.scrollToBottom,
-      stopScroll: ctx.stopScroll,
-      isAtBottom: ctx.isAtBottom,
+      scrollRef: stable.scrollRef,
+      scrollToBottom: stable.scrollToBottom,
+      stopScroll: stable.stopScroll,
+      // Never read during render (we can't subscribe without re-rendering).
+      // App.tsx reads it through the imperative contextRef which mirrors the
+      // real value via useImperativeHandle below.
+      get isAtBottom() {
+        return stable.stickyRef.current
+      },
     }),
-    [ctx.isAtBottom, ctx.scrollRef, ctx.scrollToBottom, ctx.stopScroll],
+    [stable],
   )
 }
 
@@ -112,30 +143,44 @@ export function Conversation({ className = '', children, contextRef }: Conversat
     stickyRef.current = false
   }, [])
 
-  const context = useMemo<InternalContext>(
+  // The stable context only re-computes when one of its callbacks changes,
+  // which is effectively never after the initial mount. This is what lets us
+  // put the whole subtree's tool rows behind it without them re-rendering
+  // whenever the bottom indicator flips during streaming.
+  const stableContext = useMemo<StableContext>(
     () => ({
       scrollRef,
       contentRef,
       stickyRef,
       scrollToBottom,
       stopScroll,
-      isAtBottom,
       updateIsAtBottom,
     }),
-    [isAtBottom, scrollToBottom, stopScroll, updateIsAtBottom],
+    [scrollToBottom, stopScroll, updateIsAtBottom],
   )
 
-  useImperativeHandle(contextRef, () => context, [context])
+  useImperativeHandle(
+    contextRef,
+    () => ({
+      scrollRef,
+      scrollToBottom,
+      stopScroll,
+      isAtBottom,
+    }),
+    [isAtBottom, scrollToBottom, stopScroll],
+  )
 
   return (
-    <Ctx.Provider value={context}>
-      <div
-        className={`relative flex-1 overflow-y-hidden ${className}`}
-        role="log"
-      >
-        {children}
-      </div>
-    </Ctx.Provider>
+    <StableCtx.Provider value={stableContext}>
+      <IsAtBottomCtx.Provider value={isAtBottom}>
+        <div
+          className={`relative flex-1 overflow-y-hidden ${className}`}
+          role="log"
+        >
+          {children}
+        </div>
+      </IsAtBottomCtx.Provider>
+    </StableCtx.Provider>
   )
 }
 
@@ -145,7 +190,7 @@ export type ConversationContentProps = {
 }
 
 export function ConversationContent({ className = '', children }: ConversationContentProps) {
-  const { scrollRef, contentRef, stickyRef, updateIsAtBottom } = useInternalContext()
+  const { scrollRef, contentRef, stickyRef, updateIsAtBottom } = useStableContext()
 
   useEffect(() => {
     const scrollEl = scrollRef.current
@@ -196,7 +241,8 @@ export function ConversationContent({ className = '', children }: ConversationCo
 }
 
 export function ConversationScrollButton() {
-  const { isAtBottom, scrollToBottom } = useConversationScroll()
+  const { scrollToBottom } = useConversationScroll()
+  const isAtBottom = useConversationIsAtBottom()
   const handleClick = useCallback(() => {
     void scrollToBottom({ animation: 'smooth' })
   }, [scrollToBottom])
