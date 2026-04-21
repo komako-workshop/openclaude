@@ -163,32 +163,18 @@ export function ConversationContent({ className = '', children }: ConversationCo
       updateIsAtBottom(atBottom)
     }
 
-    // Wheel is the only event we can fully trust as user-initiated — the
-    // browser never fires it for our own programmatic scrolls. Treat any
-    // upward wheel motion as an immediate intent to detach from the bottom.
-    const handleWheel = (event: WheelEvent) => {
-      if (event.deltaY < 0) {
-        stickyRef.current = false
-        updateIsAtBottom(false)
-      }
-    }
-
-    // Content grew? Snap to the bottom if the user still wants to follow.
-    // No animation, no rAF loop — just a single scrollTop assignment, which
-    // is cheap and cannot race with itself.
+    // Intentionally no auto-follow while content grows during streaming. Every
+    // previous attempt to keep the viewport pinned to the bottom while tokens
+    // streamed in fought with React rendering and made long replies feel like
+    // the whole app locked up, so we leave the viewport exactly where the user
+    // put it. We still observe resizes purely to refresh the scroll-to-bottom
+    // button visibility (content growing past the threshold reveals it, and
+    // hitting the new bottom hides it again).
     const resizeObserver = new ResizeObserver(() => {
-      if (stickyRef.current) {
-        scrollEl.scrollTop = scrollEl.scrollHeight
-        updateIsAtBottom(true)
-      } else {
-        // Still refresh the button visibility — if the user had been scrolled
-        // away and content shrank, they might now be at the bottom.
-        updateIsAtBottom(measureAtBottom())
-      }
+      updateIsAtBottom(measureAtBottom())
     })
 
     scrollEl.addEventListener('scroll', handleScroll, { passive: true })
-    scrollEl.addEventListener('wheel', handleWheel, { passive: true })
     resizeObserver.observe(contentEl)
 
     // Seed initial state so the scroll-to-bottom button renders correctly.
@@ -196,7 +182,6 @@ export function ConversationContent({ className = '', children }: ConversationCo
 
     return () => {
       scrollEl.removeEventListener('scroll', handleScroll)
-      scrollEl.removeEventListener('wheel', handleWheel)
       resizeObserver.disconnect()
     }
   }, [scrollRef, contentRef, stickyRef, updateIsAtBottom])
